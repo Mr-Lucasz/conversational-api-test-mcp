@@ -12,7 +12,7 @@ export function getAllResources(): ResourceDef[] {
       uri: "api://docs/efficient_read_paths",
       mimeType: "text/plain",
       content: [
-        "Token-efficient reading guide for the `mcp-conversational-api` MCP server.",
+        "Token-efficient reading guide for the `conversational-api-test-mcp` MCP server.",
         "",
         "Goals:",
         "- Avoid reading a whole YAML when triage is enough.",

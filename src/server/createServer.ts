@@ -22,7 +22,7 @@ const PACKAGE_VERSION = (
 
 export function createConversationalApiMcpServer(): McpServer {
   const server = new McpServer(
-    { name: "mcp-conversational-api", version: PACKAGE_VERSION },
+    { name: "conversational-api-test-mcp", version: PACKAGE_VERSION },
     {
       capabilities: { tools: {}, resources: {}, prompts: {} },
       instructions: SERVER_INSTRUCTIONS,

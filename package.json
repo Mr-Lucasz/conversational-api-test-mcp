@@ -1,5 +1,5 @@
 {
-  "name": "mcp-conversational-api",
+  "name": "conversational-api-test-mcp",
   "version": "0.1.0",
   "description": "MCP server — conversational API testing (Configuration as Code in .mcp/api/)",
   "keywords": [
@@ -25,7 +25,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "mcp-conversational-api": "./dist/index.js"
+    "conversational-api-test-mcp": "./dist/index.js"
   },
   "files": [
     "dist",

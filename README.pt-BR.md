@@ -1,4 +1,4 @@
-# MCP Conversational API
+# Conversational API Test MCP
 
 [English](README.md)
 
@@ -134,10 +134,10 @@ Registre o servidor no seu cliente MCP, apontando para `dist/index.js`:
 ```json
 {
   "servers": {
-    "mcp-conversational-api": {
+    "conversational-api-test-mcp": {
       "type": "stdio",
       "command": "node",
-      "args": ["/caminho/absoluto/para/mcp-conversational-api/dist/index.js"]
+      "args": ["/caminho/absoluto/para/conversational-api-test-mcp/dist/index.js"]
     }
   }
 }
