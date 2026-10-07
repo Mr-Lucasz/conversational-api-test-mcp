@@ -16,11 +16,11 @@
   "author": "Lucas Rodrigues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Mr-Lucasz/mcp-conversational-api.git"
+    "url": "git+https://github.com/Mr-Lucasz/conversational-api-test-mcp.git"
   },
-  "homepage": "https://github.com/Mr-Lucasz/mcp-conversational-api#readme",
+  "homepage": "https://github.com/Mr-Lucasz/conversational-api-test-mcp#readme",
   "bugs": {
-    "url": "https://github.com/Mr-Lucasz/mcp-conversational-api/issues"
+    "url": "https://github.com/Mr-Lucasz/conversational-api-test-mcp/issues"
   },
   "type": "module",
   "main": "dist/index.js",
