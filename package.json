@@ -14,6 +14,14 @@
   ],
   "license": "MIT",
   "author": "Lucas Rodrigues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mr-Lucasz/mcp-conversational-api.git"
+  },
+  "homepage": "https://github.com/Mr-Lucasz/mcp-conversational-api#readme",
+  "bugs": {
+    "url": "https://github.com/Mr-Lucasz/mcp-conversational-api/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {
