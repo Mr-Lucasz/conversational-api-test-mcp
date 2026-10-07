@@ -1,0 +1,16 @@
+version: "1"
+base_url: "http://example.test"
+variables: {}
+endpoints:
+  - id: get_token
+    method: POST
+    path: "/v1/auth/token"
+    body: {}
+    capture:
+      session_token: "$.access_token"
+  - id: list_things
+    method: GET
+    path: "/list"
+    auth_dependency: get_token
+    headers:
+      Authorization: "Bearer {{session_token}}"

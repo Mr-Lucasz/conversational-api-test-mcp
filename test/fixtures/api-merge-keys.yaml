@@ -1,0 +1,18 @@
+# Fixture: YAML merge keys (<<:) + anchors — exige parseYaml(..., { merge: true })
+version: "1"
+base_url: "https://example.test"
+_fragments:
+  bearer: &merged_bearer
+    auth_dependency: get_token
+    auth: "Bearer {{TOKEN}}"
+    auth_retry_on_401: true
+endpoints:
+  - id: get_token
+    method: POST
+    path: /oauth/token
+    capture:
+      TOKEN: "$.access_token"
+  - id: merged_endpoint
+    method: GET
+    path: /api/items
+    <<: *merged_bearer

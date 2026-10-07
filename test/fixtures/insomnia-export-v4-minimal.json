@@ -1,0 +1,20 @@
+{
+  "__export_format": 4,
+  "__export_date": "2026-01-01T00:00:00.000Z",
+  "resources": [
+    {
+      "_id": "fld_1",
+      "_type": "request_group",
+      "name": "G"
+    },
+    {
+      "_id": "req_1",
+      "_type": "request",
+      "parentId": "fld_1",
+      "name": "Ping",
+      "url": "https://example.com/ping",
+      "method": "GET",
+      "headers": []
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+version: "1"
+service: example-service
+base_url: "{{base_url}}"
+variables:
+  base_url: ""
+endpoints:
+  - id: sample_get
+    method: GET
+    path: "/get"
+    description: Example — replace base_url via .env.mcp.local

@@ -1,0 +1,15 @@
+# Runnable demo against https://httpbin.org (a public HTTP testing service).
+# Copy to `.mcp/api/httpbin.yaml` in any workspace and ask for `/vander`.
+version: "1"
+service: httpbin
+base_url: "https://httpbin.org"
+variables:
+  DEMO_BEARER: demo-123
+endpoints:
+  - id: whoami
+    description: Bearer-protected endpoint; answers 401 without an Authorization header.
+    method: GET
+    path: /bearer
+    auth: Bearer {{DEMO_BEARER}}
+    capture:
+      authenticated: $.authenticated

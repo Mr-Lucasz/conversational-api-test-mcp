@@ -1,0 +1,31 @@
+# Fixture: merge key no endpoint + anchor aninhado dentro do body (item de array)
+version: "1"
+base_url: "https://example.test"
+_fragments:
+  bearer: &nested_bearer
+    auth_dependency: get_token
+    auth: "Bearer {{TOKEN}}"
+  item: &item_base
+    externalId: "{{EXTERNAL_ID}}"
+    ownerId: "{{OWNER_ID}}"
+endpoints:
+  - id: get_token
+    method: POST
+    path: /oauth/token
+    capture:
+      TOKEN: "$.access_token"
+  - id: create_playlist
+    method: POST
+    path: /api/playlists
+    <<: *nested_bearer
+    body:
+      items:
+        - <<: *item_base
+          position: 1
+  - id: add_playlist_items
+    method: PATCH
+    path: /api/playlists/1
+    <<: *nested_bearer
+    body:
+      items:
+        - <<: *item_base

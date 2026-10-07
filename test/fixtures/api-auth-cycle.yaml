@@ -1,0 +1,16 @@
+version: "1"
+base_url: "http://example.test"
+variables: {}
+endpoints:
+  - id: ep_a
+    method: GET
+    path: "/a"
+    auth_dependency: ep_b
+    capture:
+      token_a: "$.a"
+  - id: ep_b
+    method: GET
+    path: "/b"
+    auth_dependency: ep_a
+    capture:
+      token_b: "$.b"

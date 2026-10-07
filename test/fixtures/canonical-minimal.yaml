@@ -1,0 +1,9 @@
+version: "1"
+service: test
+base_url: "{{base_url}}"
+variables:
+  base_url: "https://httpbin.org"
+endpoints:
+  - id: get_uuid
+    method: GET
+    path: "/uuid"

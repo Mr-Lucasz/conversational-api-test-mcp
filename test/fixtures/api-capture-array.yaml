@@ -1,0 +1,9 @@
+version: "1"
+base_url: "http://example.test"
+endpoints:
+  - id: sample
+    method: GET
+    path: "/"
+    capture:
+      - jsonPath: "$.x"
+        exportTo: myVar
