@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "conversational-api-test-mcp": {
+      "command": "node",
+      "args": [
+        "dist/index.js"
+      ]
+    }
+  }
+}

@@ -62,4 +62,10 @@ describe("buildBodyPresentation", () => {
     expect(p.bodyJson).toBeUndefined();
     expect(p.bodyPreviewTruncated).toBe(true);
   });
+
+  it("returns null instead of failing when jsonPathSelect matches nothing", () => {
+    const pres = buildBodyPresentation('{"a":1}', { jsonPathSelect: "$.missing" });
+    expect(pres.bodyPreview).toBe("null");
+    expect(pres.bodyJson).toBeNull();
+  });
 });

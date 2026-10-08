@@ -262,5 +262,126 @@ describe("execute_api_flow", () => {
     expect(body.steps[0].ok).toBe(true);
     clearSessionForTests(root);
   });
-});
 
+  it("responseDetail e jsonPathSelect por step controlam o que volta de cada step", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mcp-flow-detail-"));
+    const api = join(root, ".mcp", "api");
+    mkdirSync(api, { recursive: true });
+    writeFileSync(
+      join(api, "flow.yaml"),
+      [
+        "version: '1'",
+        "base_url: http://example.test",
+        "endpoints:",
+        "  - id: login",
+        "    method: POST",
+        "    path: /login",
+        "    capture:",
+        "      user_id: $.user.id",
+        "  - id: orders",
+        "    method: GET",
+        "    path: /orders",
+      ].join("\n") + "\n",
+    );
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify(
+          input.toString().endsWith("/login")
+            ? { user: { id: 7 }, access_token: "secret-token-value" }
+            : { items: [{ id: 1 }, { id: 2 }], total: 2 },
+        ),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    ) as typeof fetch;
+
+    const run = async (extra: Record<string, unknown>) =>
+      decode(
+        (
+          await executeApiFlowHandler({
+            workspaceRoot: root,
+            definitionRelativePath: ".mcp/api/flow.yaml",
+            steps: [{ requestId: "login" }, { requestId: "orders" }],
+            ...extra,
+          })
+        ).content[0].text,
+      ) as any;
+
+    const minimal = await run({ responseDetail: "minimal" });
+    const summary = await run({});
+    const perStep = await run({ responseDetail: "per_step" });
+    const selected = await run({
+      responseDetail: "minimal",
+      steps: [
+        { requestId: "login" },
+        { requestId: "orders", jsonPathSelect: "$.items[*].id" },
+      ],
+    });
+
+    globalThis.fetch = origFetch;
+    clearSessionForTests(root);
+
+    expect(minimal.steps).toEqual([
+      { requestId: "login", ok: true, status: 200 },
+      { requestId: "orders", ok: true, status: 200 },
+    ]);
+    expect(minimal.summary.capturedVariables).toEqual(["user_id"]);
+
+    // O default é `summary`: duração e valores capturados, sem corpo.
+    expect(summary.steps[0].captureApplied).toEqual({ user_id: "7" });
+    expect(summary.steps[0]).toHaveProperty("durationMs");
+    expect(summary.steps[1]).not.toHaveProperty("body");
+
+    // `per_step` devolve o corpo de cada step, já redigido.
+    expect(perStep.steps[0].body).toEqual({
+      user: { id: 7 },
+      access_token: "[REDACTED]",
+    });
+    expect(perStep.steps[1].body.total).toBe(2);
+
+    // `jsonPathSelect` traz só o corpo daquele step, em qualquer nível de detalhe.
+    expect(selected.steps[0]).not.toHaveProperty("body");
+    expect(selected.steps[1].body).toEqual([1, 2]);
+  });
+
+  it("step que falha por status traz errorPreview mesmo em minimal", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mcp-flow-errpreview-"));
+    const api = join(root, ".mcp", "api");
+    mkdirSync(api, { recursive: true });
+    writeFileSync(
+      join(api, "flow.yaml"),
+      [
+        "version: '1'",
+        "base_url: http://example.test",
+        "endpoints:",
+        "  - id: boom",
+        "    method: GET",
+        "    path: /boom",
+      ].join("\n") + "\n",
+    );
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: "db down", token: "abc123secret" }), {
+          status: 500,
+        }),
+    ) as typeof fetch;
+
+    const out = await executeApiFlowHandler({
+      workspaceRoot: root,
+      definitionRelativePath: ".mcp/api/flow.yaml",
+      steps: [{ requestId: "boom" }],
+      responseDetail: "minimal",
+    });
+
+    globalThis.fetch = origFetch;
+    clearSessionForTests(root);
+
+    const body = decode(out.content[0].text) as any;
+    expect(body.ok).toBe(false);
+    expect(body.steps[0].errorPreview).toContain("db down");
+    expect(out.content[0].text).not.toContain("abc123secret");
+  });
+});

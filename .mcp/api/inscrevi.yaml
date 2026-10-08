@@ -1,0 +1,34 @@
+version: "1"
+base_url: https://inscrevi.vercel.app
+endpoints:
+  - id: criar_usuario
+    method: POST
+    path: /api/usuarios
+    description: Cadastra um usuário
+    headers:
+      accept: "*/*"
+      Content-Type: application/json
+    body:
+      nome: Ana Lima
+      email: ana@exemplo.com
+      senha: Senha@123
+  - id: usuario_me
+    method: GET
+    path: /api/usuarios/me
+    description: Retorna o usuário autenticado
+    headers:
+      accept: "*/*"
+    auth: Bearer {{TOKEN}}
+    auth_dependency: login
+  - id: login
+    method: POST
+    path: /api/login
+    description: Autentica e devolve a sessão do usuário
+    headers:
+      accept: "*/*"
+      Content-Type: application/json
+    body:
+      email: maria@inscrevi.dev
+      senha: Senha@123
+    capture:
+      TOKEN: $.token

@@ -7,7 +7,7 @@ import { safeTool, textResult } from "./toolResult.js";
 
 export const readApiDefinitionInputSchema = z.object({
   workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
-  relativePath: z
+  definitionRelativePath: z
     .string()
     .describe("Path under workspace, e.g. .mcp/api/default.yaml"),
 });
@@ -25,13 +25,13 @@ export async function readApiDefinitionHandler(
   return safeTool(async () => {
     const full = safeResolveUnderWorkspace(
       resolveWorkspaceRoot(parsed.data.workspaceRoot),
-      parsed.data.relativePath,
+      parsed.data.definitionRelativePath,
     );
     if (!existsSync(full)) {
-      throw new Error(`File not found: ${parsed.data.relativePath}`);
+      throw new Error(`File not found: ${parsed.data.definitionRelativePath}`);
     }
     const raw = readFileSync(full, "utf8");
     const def = parseApiDefinitionYaml(raw);
-    return { path: parsed.data.relativePath, definition: def };
+    return { path: parsed.data.definitionRelativePath, definition: def };
   });
 }

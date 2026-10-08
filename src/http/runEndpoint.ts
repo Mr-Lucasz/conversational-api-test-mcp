@@ -13,7 +13,12 @@ import { buildEndpointHeadersAndBody } from "./buildEndpointRequest.js";
 import { fetchPlain, readBodyTextCapped } from "./fetchPlain.js";
 import { fetchWithDigestAuth } from "./fetchWithDigest.js";
 import { resolveRequestUrl } from "./resolveRequestUrl.js";
-import { deleteSessionVariables, getSession } from "../session/SessionStore.js";
+import {
+  deleteSessionVariables,
+  getSession,
+  type LastHttpResponse,
+} from "../session/SessionStore.js";
+import { foldEventStream, isEventStream } from "./sse.js";
 import { loadEnvMcpLocalParsed } from "../env/loadEnvMcpLocal.js";
 import { safeResolveUnderWorkspace } from "../workspace/paths.js";
 import type { ExecuteResult } from "./executeTypes.js";
@@ -26,6 +31,16 @@ export type ExecuteOutputOptions = {
   responseDetail?: "minimal" | "summary" | "full";
   jsonPathSelect?: string;
   maxBodyChars?: number;
+};
+
+/** How one run relates to the session. The `auth_dependency` pre-flight never gets these. */
+export type RunOptions = {
+  /** Values for `{{placeholders}}` of this run only, on top of the session's (inserted as-is). */
+  variables?: Record<string, string>;
+  /** Do not capture and do not replace the session's last response. */
+  ephemeral?: boolean;
+  /** Receives the raw response (status, headers, body, duration) of the request itself. */
+  onResponse?: (response: LastHttpResponse) => void;
 };
 
 function findEndpoint(
@@ -98,6 +113,7 @@ async function refreshAuthAndRetryRequest(input: {
   timeoutMs: number;
   firstResult: ExecuteResult;
   outputOptions: ExecuteOutputOptions;
+  runOptions?: RunOptions;
 }): Promise<ExecuteResult> {
   const {
     workspaceRoot,
@@ -109,6 +125,7 @@ async function refreshAuthAndRetryRequest(input: {
     timeoutMs,
     firstResult,
     outputOptions,
+    runOptions,
   } = input;
 
   // `status` também vem preenchido quando o `assert` do endpoint falhou sobre um 401.
@@ -148,6 +165,7 @@ async function refreshAuthAndRetryRequest(input: {
     ep,
     timeoutMs,
     outputOptions,
+    runOptions,
   });
 }
 
@@ -158,15 +176,15 @@ async function performHttpOnce(input: {
   ep: EndpointDefinition;
   timeoutMs: number;
   outputOptions: ExecuteOutputOptions;
+  runOptions?: RunOptions;
 }): Promise<ExecuteResult> {
-  const { workspaceRoot, def, envLocal, ep, timeoutMs, outputOptions } =
+  const { workspaceRoot, def, envLocal, ep, timeoutMs, outputOptions, runOptions } =
     input;
   const session = getSession(workspaceRoot);
-  const ctx = buildInterpolationContext(
-    def.variables,
-    envLocal,
-    session.variables,
-  );
+  const ctx = buildInterpolationContext(def.variables, envLocal, {
+    ...session.variables,
+    ...runOptions?.variables,
+  });
 
   const baseUrl = interpolateString(def.base_url ?? "{{base_url}}", ctx);
   const pathInterpolated = interpolateString(ep.path, ctx);
@@ -215,6 +233,9 @@ async function performHttpOnce(input: {
     }
     // O timer cobre também a leitura do corpo (respostas lentas / streaming).
     bodyText = await readBodyTextCapped(res);
+    if (isEventStream(res.headers.get("content-type"))) {
+      bodyText = foldEventStream(bodyText, ep.sse?.textPath);
+    }
   } catch (e) {
     clearTimeout(timer);
     const msg = controller.signal.aborted
@@ -235,6 +256,7 @@ async function performHttpOnce(input: {
     res,
     bodyText,
     outputOptions,
+    runOptions,
   });
 }
 
@@ -251,6 +273,7 @@ export async function runEndpointWithDefinition(input: {
   /** When false, do not run auth refresh + retry after 401 (used for the retry pass). */
   allow401Retry: boolean;
   outputOptions: ExecuteOutputOptions;
+  runOptions?: RunOptions;
 }): Promise<ExecuteResult> {
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT;
   const {
@@ -260,6 +283,7 @@ export async function runEndpointWithDefinition(input: {
     chain,
     allow401Retry,
     outputOptions,
+    runOptions,
   } = input;
 
   if (chain.includes(requestId)) {
@@ -298,6 +322,7 @@ export async function runEndpointWithDefinition(input: {
     ep,
     timeoutMs,
     outputOptions,
+    runOptions,
   });
 
   if (allow401Retry) {
@@ -311,6 +336,7 @@ export async function runEndpointWithDefinition(input: {
       timeoutMs,
       firstResult: result,
       outputOptions,
+      runOptions,
     });
   }
 

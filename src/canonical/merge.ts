@@ -121,6 +121,10 @@ export function mergeApiDefinitions(
     endpoints.push(...def.endpoints);
   }
 
+  // Flows and evals travel with their endpoints; on a name clash the first file wins.
+  const flows = Object.assign({}, ...inputs.map((i) => i.def.flows).reverse());
+  const evals = Object.assign({}, ...inputs.map((i) => i.def.evals).reverse());
+
   const first = inputs[0].def;
   const merged: ApiDefinitionYaml = {
     version: first.version ?? "1",
@@ -128,6 +132,8 @@ export function mergeApiDefinitions(
     name: first.name,
     base_url: first.base_url,
     variables: Object.keys(variables).length ? variables : undefined,
+    ...(Object.keys(flows).length ? { flows } : {}),
+    ...(Object.keys(evals).length ? { evals } : {}),
     endpoints,
   };
 

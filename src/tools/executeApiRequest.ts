@@ -23,7 +23,7 @@ export const executeApiRequestInputSchema = z.object({
     .int()
     .positive()
     .optional()
-    .describe("Character cap for bodyPreview (and for the projection preview when jsonPathSelect is used)."),
+    .describe("Character cap for the returned body (after jsonPathSelect, when used)."),
 });
 
 export async function executeApiRequestHandler(

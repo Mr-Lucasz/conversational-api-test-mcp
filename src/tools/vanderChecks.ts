@@ -5,16 +5,21 @@ import type {
   EndpointDefinition,
 } from "../canonical/schema.js";
 import { loadEnvMcpLocalParsed } from "../env/loadEnvMcpLocal.js";
+import { buildVanderBrief } from "../prompts/index.js";
 import {
-  VANDER_AXES,
   buildVanderPlan,
   type VanderAxis,
   type VanderCheck,
 } from "../vander/plan.js";
-import { runVanderChecks } from "../vander/run.js";
+import {
+  renderOnboarding,
+  snapshotWorkspace,
+  type WorkspaceSnapshot,
+} from "../vander/onboarding.js";
+import { DESTRUCTIVE_SKIP, runVanderChecks } from "../vander/run.js";
 import { safeResolveUnderWorkspace } from "../workspace/paths.js";
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
-import { safeTool, textResult } from "./toolResult.js";
+import { omitNullish, safeTool, textResult } from "./toolResult.js";
 
 const axisSchema = z.enum(["V", "A", "N", "D", "E", "R"]);
 
@@ -50,6 +55,23 @@ export const runVanderChecksInputSchema = z.object({
   timeoutMs: z.number().int().positive().optional(),
 });
 
+export const summonVanderInputSchema = z.object({
+  workspaceRoot: z
+    .string()
+    .optional()
+    .describe(
+      "Absolute project path (optional when MCP_WORKSPACE_ROOT is set). Lets Vander greet the user with what the workspace actually contains.",
+    ),
+  definitionRelativePath: z
+    .string()
+    .optional()
+    .describe("Definition the user wants reviewed, if they named one."),
+  requestId: z
+    .string()
+    .optional()
+    .describe("Endpoint id the user wants reviewed, if they named one."),
+});
+
 type ToolOutput = {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -81,16 +103,8 @@ function loadPlan(args: {
   return { workspaceRoot, def, ep, checks };
 }
 
-function groupByAxis<T>(
-  items: T[],
-  axisOf: (item: T) => VanderAxis,
-): Array<{ axis: VanderAxis; name: string; checks: T[] }> {
-  return VANDER_AXES.map(({ key, name }) => ({
-    axis: key,
-    name,
-    checks: items.filter((i) => axisOf(i) === key),
-  })).filter((g) => g.checks.length > 0);
-}
+// Both reports are one flat table (uniform rows are what TOON packs best). The axis
+// is the id prefix — `V-`, `A-`, `N-`, `D-`, `E-`, `R-` — so it is not repeated per row.
 
 export async function planVanderChecksHandler(
   args: unknown,
@@ -103,27 +117,23 @@ export async function planVanderChecksHandler(
     const { ep, checks } = loadPlan(parsed.data);
     const rows = checks.map((c) => ({
       id: c.id,
-      axis: c.axis,
       title: c.title,
-      mode: c.kind === "manual" ? "manual" : "auto",
-      destructive: c.kind === "request" && c.destructive,
+      mode:
+        c.kind === "manual"
+          ? "manual"
+          : c.kind === "request" && c.destructive
+            ? "destructive"
+            : "auto",
     }));
+    const count = (m: string) => rows.filter((r) => r.mode === m).length;
     return {
       endpoint: { id: ep.id, method: ep.method, path: ep.path },
       summary: {
-        auto: rows.filter((r) => r.mode === "auto").length,
-        manual: rows.filter((r) => r.mode === "manual").length,
-        destructive: rows.filter((r) => r.destructive).length,
+        auto: count("auto") + count("destructive"),
+        manual: count("manual"),
+        destructive: count("destructive"),
       },
-      axes: groupByAxis(rows, (r) => r.axis).map((g) => ({
-        ...g,
-        checks: g.checks.map(({ id, title, mode, destructive }) => ({
-          id,
-          title,
-          mode,
-          destructive,
-        })),
-      })),
+      checks: rows,
     };
   });
 }
@@ -147,8 +157,15 @@ export async function runVanderChecksHandler(
       maxDurationMs: parsed.data.maxDurationMs,
       timeoutMs: parsed.data.timeoutMs,
     });
-    const axisOf = new Map(checks.map((c) => [c.id, c.axis]));
     const count = (r: string) => results.filter((x) => x.result === r).length;
+    const failures = results
+      .filter((r) => r.result === "fail")
+      .map(({ id, title, expected, actual, note }) =>
+        omitNullish({ id, title, expected, actual, note }),
+      );
+    const heldBack = results.filter((r) =>
+      r.note?.startsWith(DESTRUCTIVE_SKIP),
+    ).length;
     return {
       endpoint: { id: ep.id, method: ep.method, path: ep.path },
       summary: {
@@ -157,7 +174,44 @@ export async function runVanderChecksHandler(
         skipped: count("skipped"),
         manual: checks.filter((c) => c.kind === "manual").length,
       },
-      axes: groupByAxis(results, (r) => axisOf.get(r.id) as VanderAxis),
+      // `detail` is the evidence: what came back, or why the check did not run.
+      checks: results.map((r) => ({
+        id: r.id,
+        result: r.result,
+        detail: (r.result === "skipped" ? r.note : r.actual) ?? "",
+      })),
+      ...(failures.length ? { failures } : {}),
+      ...(heldBack
+        ? {
+            hint: `${heldBack} state-changing probes not sent; ask the user, then rerun with includeDestructive: true`,
+          }
+        : {}),
     };
   });
+}
+
+/**
+ * Returns the Vander brief as plain text, for clients where the user just says "hi Vander".
+ * Without a target it adds the onboarding: a workspace snapshot plus Postman-style use cases.
+ */
+export async function summonVanderHandler(args: unknown): Promise<ToolOutput> {
+  const parsed = summonVanderInputSchema.safeParse(args ?? {});
+  if (!parsed.success) {
+    return textResult({ error: parsed.error.flatten() }, true);
+  }
+  const { workspaceRoot, ...target } = parsed.data;
+  if (target.definitionRelativePath || target.requestId) {
+    return { content: [{ type: "text", text: buildVanderBrief(target) }] };
+  }
+  let snapshot: WorkspaceSnapshot | null = null;
+  try {
+    snapshot = await snapshotWorkspace(resolveWorkspaceRoot(workspaceRoot));
+  } catch {
+    // no workspace known yet: the brief asks for it
+  }
+  return {
+    content: [
+      { type: "text", text: buildVanderBrief({}, renderOnboarding(snapshot)) },
+    ],
+  };
 }

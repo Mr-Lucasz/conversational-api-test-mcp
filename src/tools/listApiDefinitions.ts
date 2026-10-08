@@ -24,38 +24,29 @@ export const listApiDefinitionsInputSchema = z.object({
   includeCatalogMeta: z
     .boolean()
     .optional()
-    .describe(
-      "When true, reads `.mcp/api/_catalog.yaml` (if present) and returns service/summary per path.",
-    ),
+    .describe("Return service/summary per path from `.mcp/api/_catalog.yaml`, if present."),
   query: z
     .string()
     .optional()
-    .describe(
-      "Case-insensitive substring filter on path and, when available, on service/summary from _catalog.yaml.",
-    ),
+    .describe("Case-insensitive substring filter on path and on service/summary from _catalog.yaml."),
   maxFiles: z
     .number()
     .int()
     .positive()
     .optional()
-    .describe("Cap the number of paths returned after sorting (page size when combined with cursor)."),
+    .describe("Page size."),
   sortBy: z
     .enum(["path", "mtime_asc", "mtime_desc"])
     .optional()
-    .default("path")
-    .describe("Sort order before applying maxFiles"),
+    .default("path"),
   cursor: z
     .string()
     .optional()
-    .describe(
-      "Cursor opaco de `nextCursor` de uma chamada anterior; retoma a listagem daí em vez de rescanear desde o início. Sem cursor = primeira página.",
-    ),
+    .describe("`nextCursor` from the previous page."),
   fields: z
     .array(z.string())
     .optional()
-    .describe(
-      "When given, projects each `entries` item to these keys only (path/service/summary). No effect on `files` (list of strings).",
-    ),
+    .describe("Keep only these keys of each `entries` item (path/service/summary)."),
 });
 
 export async function listApiDefinitionsHandler(
@@ -72,13 +63,7 @@ export async function listApiDefinitionsHandler(
     const root = resolve(resolveWorkspaceRoot(parsed.data.workspaceRoot));
     const apiDir = mcpApiDir(root);
     if (!existsSync(apiDir)) {
-      return {
-        workspaceRoot: root,
-        apiDir,
-        files: [] as string[],
-        totalMatched: 0,
-        truncated: false,
-      };
+      return { files: [] as string[], totalMatched: 0, truncated: false };
     }
     const pattern = parsed.data.globPattern ?? defaultGlob;
     const absFiles = await glob(pattern, {
@@ -186,16 +171,13 @@ export async function listApiDefinitionsHandler(
           })
         : undefined;
 
+    // Sem eco de workspaceRoot/apiDir/globPattern/sortBy: quem chamou já sabe o que pediu.
+    // Com `entries`, `files` seria a mesma lista de paths outra vez.
     return {
-      workspaceRoot: root,
-      apiDir,
-      files: sliced.map((o) => o.rel),
+      ...(entries ? { entries } : { files: sliced.map((o) => o.rel) }),
       totalMatched,
       truncated,
       ...(nextCursor !== undefined ? { nextCursor } : {}),
-      globPattern: pattern,
-      sortBy,
-      entries,
     };
   });
 }

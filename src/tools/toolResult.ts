@@ -31,6 +31,17 @@ export function textResult(
   };
 }
 
+/**
+ * Tira chaves `null`/`undefined` do nível de topo de um resultado de tool: o encoder
+ * escreve `chave: null` para as duas, e uma ausência não precisa custar uma linha.
+ * Raso de propósito — `null` dentro do corpo de uma resposta de API é dado, não ausência.
+ */
+export function omitNullish<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== null && v !== undefined),
+  ) as Partial<T>;
+}
+
 export async function safeTool<T>(
   fn: () => Promise<T>,
 ): Promise<{

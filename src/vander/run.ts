@@ -15,7 +15,6 @@ import {
 } from "../http/VariableInterpolator.js";
 import { deleteSessionVariables, getSession } from "../session/SessionStore.js";
 import {
-  isSafeMethod,
   type RequestVariant,
   type StatusExpectation,
   type VanderCheck,
@@ -23,6 +22,11 @@ import {
 
 const DEFAULT_TIMEOUT = 30_000;
 const SNIPPET_CHARS = 300;
+const PROBE_CONCURRENCY = 4;
+/** Prefix of the `note` of a probe skipped for being state-changing. */
+export const DESTRUCTIVE_SKIP = "state-changing";
+
+type RequestCheck = Extract<VanderCheck, { kind: "request" }>;
 const LEAK_PATTERN =
   /\bat [\w$.<>]+ \(.+:\d+:\d+\)|Traceback \(most recent call last\)|\bException in thread\b|SQLSTATE|ORA-\d{5}|java\.lang\.\w+Exception/;
 
@@ -287,7 +291,7 @@ export async function runVanderChecks(
 ): Promise<VanderResult[]> {
   const { ep, checks } = input;
   const requestChecks = checks.filter(
-    (c): c is Extract<VanderCheck, { kind: "request" }> => c.kind === "request",
+    (c): c is RequestCheck => c.kind === "request",
   );
 
   const blocker = ep.digest_auth
@@ -295,34 +299,17 @@ export async function runVanderChecks(
     : await refreshAuth(input);
 
   const results = new Map<string, VanderResult>();
-  const probes: Array<{ id: string; probe: Probe }> = [];
-  let baseline: Probe | undefined;
+  const probeById = new Map<string, Probe>();
 
-  for (const check of requestChecks) {
+  const runProbe = async (check: RequestCheck): Promise<void> => {
     const base = { id: check.id, title: check.title };
     const expected = describeExpectation(check.expect);
-    if (blocker) {
-      results.set(check.id, { ...base, result: "skipped", note: blocker });
-      continue;
-    }
-    if (check.destructive && !input.includeDestructive) {
-      const sends = check.variant.method ?? ep.method;
-      results.set(check.id, {
-        ...base,
-        result: "skipped",
-        note: `sends ${sends}${isSafeMethod(sends) ? "" : " (state-changing)"}; rerun with includeDestructive: true`,
-      });
-      continue;
-    }
     const probe = await sendVariant(input, check.variant);
     if ("error" in probe) {
       results.set(check.id, { ...base, result: "fail", expected, actual: probe.error });
-      continue;
+      return;
     }
-    probes.push({ id: check.id, probe });
-    if (check.id === "D-baseline") {
-      baseline = probe;
-    }
+    probeById.set(check.id, probe);
     const ok = statusMatches(probe.status, check.expect);
     results.set(check.id, {
       ...base,
@@ -331,7 +318,48 @@ export async function runVanderChecks(
       actual: `status ${probe.status} in ${probe.durationMs}ms`,
       ...(ok || !probe.bodyText ? {} : { note: snippet(probe.bodyText) }),
     });
+  };
+
+  // Read-only probes are independent of each other: send them a few at a time.
+  // State-changing ones keep the plan order, and so does the baseline — measured
+  // alone, after the batch, so R-duration is not inflated by the other probes.
+  const parallel: RequestCheck[] = [];
+  const serial: RequestCheck[] = [];
+  for (const check of requestChecks) {
+    const skip = blocker
+      ? blocker
+      : check.destructive && !input.includeDestructive
+        ? `${DESTRUCTIVE_SKIP} (${check.variant.method ?? ep.method})`
+        : null;
+    if (skip) {
+      results.set(check.id, {
+        id: check.id,
+        title: check.title,
+        result: "skipped",
+        note: skip,
+      });
+    } else if (check.destructive || check.id === "D-baseline") {
+      serial.push(check);
+    } else {
+      parallel.push(check);
+    }
   }
+  await Promise.all(
+    Array.from({ length: PROBE_CONCURRENCY }, async () => {
+      for (let c = parallel.shift(); c; c = parallel.shift()) {
+        await runProbe(c);
+      }
+    }),
+  );
+  for (const check of serial) {
+    await runProbe(check);
+  }
+
+  const probes = requestChecks.flatMap((c) => {
+    const probe = probeById.get(c.id);
+    return probe ? [{ id: c.id, probe }] : [];
+  });
+  const baseline = probeById.get("D-baseline");
 
   for (const check of checks) {
     if (check.kind === "derived") {

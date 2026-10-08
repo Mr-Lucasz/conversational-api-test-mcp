@@ -135,7 +135,7 @@ describe("benchmarks (proxies de tokens/round-trips)", () => {
     expect(flowLen).toBeLessThan(separateLen);
   });
 
-  it("jsonPathSelect reduz bodyPreview (projeção) quando em summary", async () => {
+  it("jsonPathSelect reduz o corpo devolvido (projeção) quando em summary", async () => {
     const root = mkdtempSync(join(tmpdir(), "mcp-metrics-jsonpath-"));
     const api = join(root, ".mcp", "api");
     mkdirSync(api, { recursive: true });
@@ -188,10 +188,86 @@ describe("benchmarks (proxies de tokens/round-trips)", () => {
 
     const w1 = decode(without.content[0].text) as any;
     const w2 = decode(withProjection.content[0].text) as any;
-    expect(String(w2.bodyPreview).length).toBeLessThan(
-      String(w1.bodyPreview).length,
+    // Estourou o cap: começo truncado + wrapper com as chaves de topo.
+    expect(w1.bodyPreviewTruncated).toBe(true);
+    expect(w1.bodyJson.topLevelKeys).toEqual(["items"]);
+    // A projeção coube: o valor volta uma vez só, em `bodyJson`.
+    expect(w2.bodyJson).toBe(0);
+    expect(w2).not.toHaveProperty("bodyPreview");
+    expect(w2).not.toHaveProperty("bodyPreviewTruncated");
+    expect(withProjection.content[0].text.length).toBeLessThan(
+      without.content[0].text.length,
     );
-    expect(w2.bodyPreview).toContain("0");
+  });
+
+  it("summary devolve o corpo uma vez e só os headers que importam", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mcp-metrics-summary-shape-"));
+    const api = join(root, ".mcp", "api");
+    mkdirSync(api, { recursive: true });
+    writeFileSync(
+      join(api, "def.yaml"),
+      [
+        "version: '1'",
+        "base_url: http://example.test",
+        "endpoints:",
+        "  - id: get_small",
+        "    method: GET",
+        "    path: /small",
+        "  - id: get_html",
+        "    method: GET",
+        "    path: /html",
+      ].join("\n") + "\n",
+    );
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      input.toString().endsWith("/html")
+        ? new Response("<html>oi</html>", {
+            status: 200,
+            headers: { "Content-Type": "text/html" },
+          })
+        : new Response(JSON.stringify({ id: "abc", deletedAt: null }), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+              Date: "Wed, 07 Oct 2026 19:02:39 GMT",
+              Server: "gunicorn",
+              "X-RateLimit-Remaining": "41",
+            },
+          }),
+    ) as typeof fetch;
+
+    const run = async (requestId: string, responseDetail: string) =>
+      decode(
+        (
+          await executeApiRequestHandler({
+            workspaceRoot: root,
+            definitionRelativePath: ".mcp/api/def.yaml",
+            requestId,
+            responseDetail,
+          })
+        ).content[0].text,
+      ) as Record<string, any>;
+
+    const summary = await run("get_small", "summary");
+    const full = await run("get_small", "full");
+    const html = await run("get_html", "summary");
+
+    globalThis.fetch = origFetch;
+    clearSessionForTests(root);
+
+    // `null` dentro do corpo é dado da API: não pode sumir.
+    expect(summary.bodyJson).toEqual({ id: "abc", deletedAt: null });
+    expect(summary).not.toHaveProperty("bodyPreview");
+    expect(summary).not.toHaveProperty("bodyPreviewTruncated");
+    expect(summary.responseHeaders).toEqual({
+      "content-type": "application/json",
+      "x-ratelimit-remaining": "41",
+    });
+    expect(Object.keys(full.responseHeaders)).toContain("server");
+
+    expect(html.bodyPreview).toBe("<html>oi</html>");
+    expect(html).not.toHaveProperty("bodyJson");
   });
 
   it("regressão: minimal não reintroduz headers/bodyJson/campos vazios sempre-presentes", async () => {

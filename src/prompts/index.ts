@@ -41,13 +41,39 @@ const VANDER_PERSONA = [
   "4. Pick the two or three `manual` ideas that matter most for this endpoint and explore them with `execute_api_request` / `dry_run_request`. Do not edit definition files without asking.",
   "5. Report.",
   "",
+  "When the endpoint answers with generated text (an LLM, a RAG, a search), one request proves nothing: the same question can come back different. Use `run_eval` instead — several cases, each sent more than once, with a pass rate. Check by code everything that can be (status, latency, cited ids among the retrieved ones, words that must or must not appear, a refusal for out-of-scope questions) and ask for `judge` samples only for what cannot (is the answer supported by the passages, does it answer the question). Ask before sending many requests: each one may cost money.",
+  "",
   "How Vander reports:",
   "- One verdict line first: how many checks passed, failed and were skipped.",
   "- Then one line per axis, in V-A-N-D-E-R order: ✅ pass, ❌ fail, ⚪ not checked — with the evidence for every ❌.",
   "- Then findings, most severe first, each as: what was sent, what came back, why it matters.",
   "- End with what was not tested and why. Never present a skipped or manual check as passed.",
+  "- Keep what code verified apart from what you judged yourself, and label the second as judgement.",
   "- Values shown as [REDACTED] are credentials; never ask the user to paste them.",
 ].join("\n");
+
+const NO_TARGET_HINT =
+  "No target was given. Call `summon_vander` with `workspaceRoot` (absolute project path) to get the workspace snapshot and the onboarding menu, then greet the user with it.";
+
+/** The Vander brief: persona, heuristic, working method and — when known — the target. */
+export function buildVanderBrief(
+  args: { definitionRelativePath?: string; requestId?: string },
+  onboarding: string = NO_TARGET_HINT,
+): string {
+  const { definitionRelativePath, requestId } = args;
+  const target =
+    definitionRelativePath || requestId
+      ? [
+          "",
+          "Start with:",
+          ...(definitionRelativePath
+            ? [`- definition: ${definitionRelativePath}`]
+            : []),
+          ...(requestId ? [`- endpoint: ${requestId}`] : []),
+        ]
+      : ["", onboarding];
+  return [VANDER_PERSONA, ...target].join("\n");
+}
 
 export function getAllPrompts(): PromptDef[] {
   return [
@@ -57,23 +83,7 @@ export function getAllPrompts(): PromptDef[] {
       description:
         "Talk to Vander, a senior API QA persona that reviews an endpoint through Verbs, Authorization, Negative, Data, Errors and Responsiveness.",
       argsSchema: vanderArgs,
-      build: ({ definitionRelativePath, requestId }) => {
-        const target =
-          definitionRelativePath || requestId
-            ? [
-                "",
-                "Start with:",
-                ...(definitionRelativePath
-                  ? [`- definition: ${definitionRelativePath}`]
-                  : []),
-                ...(requestId ? [`- endpoint: ${requestId}`] : []),
-              ]
-            : [
-                "",
-                "No target was given: introduce yourself and ask which API or endpoint to review, offering to list the definitions available.",
-              ];
-        return [VANDER_PERSONA, ...target].join("\n");
-      },
+      build: (args) => buildVanderBrief(args),
     },
   ];
 }

@@ -4,6 +4,7 @@ export type LastHttpResponse = {
   status: number;
   headers: Record<string, string>;
   bodyText: string;
+  durationMs?: number;
 };
 
 export type SessionState = {

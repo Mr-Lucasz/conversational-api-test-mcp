@@ -3,7 +3,7 @@ import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { safeResolveUnderWorkspace } from "../workspace/paths.js";
 import { parseApiDefinitionYaml } from "../canonical/io.js";
-import { safeTool, textResult } from "./toolResult.js";
+import { omitNullish, safeTool, textResult } from "./toolResult.js";
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
 import { pickFields } from "./pickFields.js";
 
@@ -62,11 +62,7 @@ export async function summarizeApiDefinitionHandler(
     // full: mantém o mesmo comportamento conceitual do `read_api_definition`.
     if (detailLevel === "full") {
       const def = parseApiDefinitionYaml(rawText);
-      return {
-        path: definitionRelativePath,
-        definition: def,
-        requestId: requestId ?? undefined,
-      };
+      return { path: definitionRelativePath, definition: def };
     }
 
     const raw = parseYaml(rawText, { merge: true }) as Record<string, unknown>;
@@ -80,6 +76,10 @@ export async function summarizeApiDefinitionHandler(
       | Record<string, { steps?: unknown[]; description?: string }>
       | undefined;
     const flowNames = flowsRaw ? Object.keys(flowsRaw) : undefined;
+    const evalNames =
+      raw.evals && typeof raw.evals === "object"
+        ? Object.keys(raw.evals)
+        : undefined;
 
     const endpointsRaw = (raw.endpoints as Array<Record<string, unknown>> | undefined) ?? [];
     const endpoints = endpointsRaw.map((e) =>
@@ -89,22 +89,22 @@ export async function summarizeApiDefinitionHandler(
       ),
     );
 
-    const endpoint =
-      requestId && endpointsRaw.length
-        ? endpointsRaw.find((e) => e.id === requestId) ?? null
-        : null;
+    const endpoint = requestId
+      ? endpointsRaw.find((e) => e.id === requestId)
+      : undefined;
 
-    return {
+    return omitNullish({
       path: definitionRelativePath,
-      service: service ?? undefined,
+      service,
       base_url,
       variableKeys,
       tags,
       flowNames,
+      evalNames,
       endpointCount: endpointsRaw.length,
       endpoints,
       endpoint,
-    };
+    });
   });
 }
 

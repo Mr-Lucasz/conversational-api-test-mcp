@@ -1,0 +1,71 @@
+# A small "collection" against https://jsonplaceholder.typicode.com (public fake REST API).
+# Copy to `.mcp/api/blog.yaml` and ask: "run the smoke flow of blog.yaml".
+# Writes are faked by the service: POST / PUT / DELETE answer as if they worked, nothing is stored.
+version: "1"
+service: blog
+base_url: "https://jsonplaceholder.typicode.com"
+flows:
+  smoke:
+    description: Is the API up and answering with data?
+    steps:
+      - requestId: list_posts
+        assert:
+          status: 200
+          jsonPathExists: "$[0].id"
+  read_post_with_comments:
+    description: Take the first post of the list, open it, then load its comments.
+    steps:
+      - list_posts
+      - requestId: get_post
+        assert:
+          jsonPathExists: "$.title"
+      - requestId: list_comments
+        assert:
+          jsonPathExists: "$[0].email"
+  post_lifecycle:
+    description: Create, replace and delete a post.
+    steps:
+      - list_posts
+      - create_post
+      - update_post
+      - delete_post
+endpoints:
+  - id: list_posts
+    method: GET
+    path: /posts
+    params:
+      _limit: "5"
+    capture:
+      post_id: "$[0].id"
+  - id: get_post
+    method: GET
+    path: /posts/{{post_id}}
+  - id: list_comments
+    method: GET
+    path: /posts/{{post_id}}/comments
+  - id: create_post
+    method: POST
+    path: /posts
+    body:
+      title: "Smoke {{$date}}"
+      body: Created by an API test
+      userId: 1
+    capture:
+      created_id: "$.id"
+    assert:
+      status: 201
+  - id: update_post
+    method: PUT
+    path: /posts/{{post_id}}
+    body:
+      id: "{{post_id}}"
+      title: Updated by an API test
+      body: Replaced
+      userId: 1
+    assert:
+      status: 200
+  - id: delete_post
+    method: DELETE
+    path: /posts/{{post_id}}
+    assert:
+      status: 200

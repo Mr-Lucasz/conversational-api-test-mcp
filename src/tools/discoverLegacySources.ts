@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { discoverLegacyApiSources } from "../workspace/discovery.js";
+import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
 import { safeTool, textResult } from "./toolResult.js";
 
 export const discoverLegacySourcesInputSchema = z.object({
-  workspaceRoot: z.string(),
+  workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
   maxFiles: z.number().int().positive().optional(),
   maxDepth: z.number().int().positive().optional(),
 });
@@ -20,7 +21,7 @@ export async function discoverLegacySourcesHandler(
   }
   return safeTool(async () => {
     const hits = await discoverLegacyApiSources({
-      workspaceRoot: parsed.data.workspaceRoot,
+      workspaceRoot: resolveWorkspaceRoot(parsed.data.workspaceRoot),
       maxFiles: parsed.data.maxFiles,
       maxDepth: parsed.data.maxDepth,
     });

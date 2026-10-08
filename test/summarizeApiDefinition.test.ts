@@ -52,7 +52,7 @@ describe("summarizeApiDefinitionHandler", () => {
     expect(body.flowNames).toEqual(["smoke_flow"]);
     expect(Array.isArray(body.endpoints)).toBe(true);
     expect(body.endpoints.map((e: any) => e.id).sort()).toEqual(["ep1", "ep2"]);
-    expect(body.endpoint).toBeNull();
+    expect(body.endpoint).toBeUndefined();
   });
 
   it("selects endpoint when requestId is provided", async () => {
@@ -78,7 +78,7 @@ describe("summarizeApiDefinitionHandler", () => {
     });
 
     const body = decode(res.content[0].text) as any;
-    expect(body.endpoint).not.toBeNull();
+    expect(body.endpoint).toBeDefined();
     expect(body.endpoint.id).toBe("ep1");
     expect(body.endpoint.method).toBe("GET");
   });

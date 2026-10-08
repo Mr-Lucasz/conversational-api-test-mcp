@@ -1,14 +1,16 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decode } from "@toon-format/toon";
 import { parseApiDefinitionYaml } from "../src/canonical/io.js";
 import { getAllPrompts } from "../src/prompts/index.js";
+import { initWorkspaceHandler } from "../src/tools/initWorkspace.js";
 import { getLastResponse, getSessionVariable } from "../src/session/SessionStore.js";
 import {
   planVanderChecksHandler,
   runVanderChecksHandler,
+  summonVanderHandler,
 } from "../src/tools/vanderChecks.js";
 import { buildVanderPlan } from "../src/vander/plan.js";
 
@@ -55,14 +57,13 @@ function json(body: unknown, status = 200): Response {
 
 type Report = {
   summary: Record<string, number>;
-  axes: Array<{
-    axis: string;
-    checks: Array<{ id: string; result?: string; mode?: string; destructive?: boolean; actual?: string; note?: string }>;
-  }>;
+  checks: Array<{ id: string; result?: string; mode?: string; detail?: string }>;
+  failures?: Array<{ id: string; title: string; expected?: string; actual?: string; note?: string }>;
+  hint?: string;
 };
 
-function checksOf(report: Report): Map<string, Report["axes"][number]["checks"][number]> {
-  return new Map(report.axes.flatMap((a) => a.checks).map((c) => [c.id, c]));
+function checksOf(report: Report): Map<string, Report["checks"][number]> {
+  return new Map(report.checks.map((c) => [c.id, c]));
 }
 
 /** A well-behaved API: bearer `good`, GET/POST on /orders, validates the POST body. */
@@ -138,7 +139,8 @@ describe("VANDER plan", () => {
     });
     const report = decode(out.content[0].text) as Report;
     expect(out.isError).toBeFalsy();
-    expect(report.axes.map((a) => a.axis)).toEqual(["A"]);
+    expect(report.checks.map((c) => c.id)).toEqual(["A-none", "A-invalid", "A-m1", "A-m2"]);
+    expect(report.checks.map((c) => c.mode)).toEqual(["auto", "auto", "manual", "manual"]);
     expect(report.summary).toEqual({ auto: 2, manual: 2, destructive: 0 });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -165,8 +167,17 @@ describe("run_vander_checks", () => {
     expect(checks.get("D-baseline")?.result).toBe("pass");
     expect(checks.get("D-captures")?.result).toBe("pass");
     expect(checks.get("R-duration")?.result).toBe("pass");
-    expect(checks.get("V-delete")?.result).toBe("skipped");
+    expect(checks.get("V-delete")).toEqual({
+      id: "V-delete",
+      result: "skipped",
+      detail: "state-changing (DELETE)",
+    });
     expect(calls.some((c) => /^(PUT|PATCH|DELETE) /.test(c))).toBe(false);
+    // Nothing failed: no `failures` block, and one hint instead of a note per skipped probe.
+    expect(report.failures).toBeUndefined();
+    expect(report.hint).toContain("3 state-changing probes not sent");
+    // The baseline is measured on its own, after the read-only probes.
+    expect(calls.at(-1)).toBe("GET /v1/orders");
 
     // Probes leave no trace in the session beyond the refreshed credentials.
     expect(getSessionVariable(ws, "first_id")).toBeUndefined();
@@ -202,7 +213,10 @@ describe("run_vander_checks", () => {
     const checks = checksOf(report);
 
     expect(checks.get("A-none")?.result).toBe("fail");
-    expect(checks.get("A-none")?.actual).toContain("status 200");
+    expect(checks.get("A-none")?.detail).toContain("status 200");
+    const failure = report.failures?.find((f) => f.id === "A-invalid");
+    expect(failure?.expected).toBe("status in [401, 403]");
+    expect(failure?.note).toContain("at verify");
     expect(checks.get("A-invalid")?.result).toBe("fail");
     expect(checks.get("D-captures")?.result).toBe("fail");
     expect(checks.get("E-no-5xx")?.result).toBe("fail");
@@ -250,6 +264,7 @@ describe("vander prompt", () => {
     expect(positions.every((p) => p >= 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
     expect(text).toContain("No target was given");
+    expect(text).toContain("summon_vander");
   });
 
   it("includes the target when given", () => {
@@ -259,5 +274,94 @@ describe("vander prompt", () => {
     });
     expect(text).toContain("- definition: .mcp/api/weather.yaml");
     expect(text).toContain("- endpoint: forecast");
+  });
+
+  it("summon_vander with a target returns the same brief as the prompt", async () => {
+    const out = await summonVanderHandler({ requestId: "forecast" });
+    expect(out.isError).toBeFalsy();
+    expect(out.content[0].text).toBe(prompt.build({ requestId: "forecast" }));
+  });
+
+  it("summon_vander without a target explains the product and the setup status", async () => {
+    const ws = workspace();
+    writeFileSync(join(ws, "orders.postman_collection.json"), "{}");
+    writeFileSync(
+      join(ws, ".env.mcp.local"),
+      "STAGING_BASE_URL=https://staging.example.test\nAPI_KEY=k",
+    );
+    const text = (await summonVanderHandler({ workspaceRoot: ws })).content[0].text;
+
+    expect(text).toContain("First contact — onboarding");
+    expect(text).toContain("API testing by conversation");
+    expect(text).toContain("# .mcp/api/my-api.yaml");
+    expect(text).toContain("# .env.mcp.local");
+    expect(text).toContain("[done] definitions in `.mcp/api/`: 1");
+    expect(text).toContain(".mcp/api/def.yaml: 3 requests, no flows");
+    expect(text).toContain("[done] `.env.mcp.local` at the project root (environments: STAGING)");
+    expect(text).toContain("[missing] `.env.mcp.local` listed in `.gitignore`");
+    expect(text).toContain("orders.postman_collection.json (postman)");
+    expect(text).toContain("Collection Runner");
+    expect(text).not.toContain("https://staging.example.test");
+  });
+
+  it("a workspace that is fully set up gets the short brief, not the tour", async () => {
+    const ws = workspace();
+    writeFileSync(join(ws, ".env.mcp.local"), "API_KEY=k");
+    writeFileSync(join(ws, ".gitignore"), ".env.mcp.local\n");
+    const text = (await summonVanderHandler({ workspaceRoot: ws })).content[0].text;
+
+    expect(text).toContain("you are **Vander**");
+    expect(text).toContain("already set up");
+    expect(text).toContain(".mcp/api/def.yaml: 3 requests, no flows");
+    expect(text).not.toContain("First contact — onboarding");
+    expect(text).not.toContain("Collection Runner");
+  });
+
+  it("onboarding of an empty workspace marks everything missing", async () => {
+    const empty = mkdtempSync(join(tmpdir(), "mcp-vander-empty-"));
+    const text = (await summonVanderHandler({ workspaceRoot: empty })).content[0].text;
+    expect(text).toContain("[missing] definitions in `.mcp/api/`");
+    expect(text).toContain("[missing] `.env.mcp.local` at the project root");
+    expect(text).toContain("init_workspace");
+  });
+});
+
+describe("init_workspace", () => {
+  it("creates the folder, a demo, the env template and the gitignore line", async () => {
+    const root = mkdtempSync(join(tmpdir(), "mcp-init-"));
+    const out = decode(
+      (await initWorkspaceHandler({ workspaceRoot: root })).content[0].text,
+    ) as { created: string[]; kept: string[] };
+
+    expect(out.created).toEqual([
+      ".mcp/api/",
+      ".mcp/api/demo.yaml",
+      ".env.mcp.local",
+      ".gitignore (added .env.mcp.local)",
+    ]);
+    const demo = parseApiDefinitionYaml(
+      readFileSync(join(root, ".mcp/api/demo.yaml"), "utf8"),
+    );
+    expect(demo.endpoints[0].id).toBe("whoami");
+    expect(readFileSync(join(root, ".env.mcp.local"), "utf8")).toContain(
+      "# BASE_URL=https://api.example.com",
+    );
+    expect(readFileSync(join(root, ".gitignore"), "utf8")).toBe(".env.mcp.local\n");
+  });
+
+  it("never overwrites what is already there", async () => {
+    const root = workspace();
+    writeFileSync(join(root, ".env.mcp.local"), "API_KEY=real");
+    writeFileSync(join(root, ".gitignore"), "node_modules/");
+    const out = decode(
+      (await initWorkspaceHandler({ workspaceRoot: root })).content[0].text,
+    ) as { created: string[]; kept: string[] };
+
+    expect(out.created).toEqual([".gitignore (added .env.mcp.local)"]);
+    expect(out.kept).toEqual([".mcp/api/", ".env.mcp.local"]);
+    expect(readFileSync(join(root, ".env.mcp.local"), "utf8")).toBe("API_KEY=real");
+    expect(readFileSync(join(root, ".gitignore"), "utf8")).toBe(
+      "node_modules/\n.env.mcp.local\n",
+    );
   });
 });

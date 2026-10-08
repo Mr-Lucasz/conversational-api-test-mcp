@@ -70,7 +70,8 @@ export function buildBodyPresentation(
   }
 
   if (jsonPathSelect) {
-    const projected = projectJson(parsed, jsonPathSelect);
+    // Sem match o JSONPath devolve undefined; null mantém a saída serializável.
+    const projected = projectJson(parsed, jsonPathSelect) ?? null;
     const projectedText = JSON.stringify(projected);
     const projectedTruncated = projectedText.length > maxBodyChars;
     const projectedPreview = truncateBody(projectedText, maxBodyChars);

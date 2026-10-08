@@ -42,70 +42,23 @@ summary:
   fail: 1
   skipped: 4
   manual: 6
-axes[5]:
-  - axis: V
-    name: Verbs
-    checks[5]:
-      - id: V-options
-        title: OPTIONS does not cause a server error
-        result: pass
-        expected: status not5xx
-        actual: status 200 in 656ms
-      - id: V-post
-        title: POST (not declared for this path) is rejected
-        result: skipped
-        note: "sends POST (state-changing); rerun with includeDestructive: true"
-      - id: V-put
-        title: PUT (not declared for this path) is rejected
-        result: skipped
-        note: "sends PUT (state-changing); rerun with includeDestructive: true"
-      - id: V-patch
-        title: PATCH (not declared for this path) is rejected
-        result: skipped
-        note: "sends PATCH (state-changing); rerun with includeDestructive: true"
-      - id: V-delete
-        title: DELETE (not declared for this path) is rejected
-        result: skipped
-        note: "sends DELETE (state-changing); rerun with includeDestructive: true"
-  - axis: A
-    name: Authorization
-    checks[2]:
-      - id: A-none
-        title: Request without credentials is rejected
-        result: pass
-        expected: "status in [401, 403]"
-        actual: status 401 in 435ms
-      - id: A-invalid
-        title: Request with an invalid token is rejected
-        result: fail
-        expected: "status in [401, 403]"
-        actual: status 200 in 142ms
-        note: "{\"authenticated\":true,\"token\":\"[REDACTED]\"}"
-  - axis: D
-    name: Data
-    checks[3]:
-      - id: D-baseline
-        title: Request as declared succeeds
-        result: pass
-        expected: status 2xx
-        actual: status 200 in 196ms
-      - id: D-content-type
-        title: Content-Type matches the body actually returned
-        result: pass
-        expected: Content-Type consistent with the body
-        actual: "content-type \"application/json\", body is JSON"
-      - id: D-captures
-        title: Every captured JSONPath exists in the response
-        result: pass
-  - axis: E
-    name: Errors
-    checks[2]{id,title,result}:
-      E-no-5xx,No probe made the server answer 5xx,pass
-      E-no-leak,Error bodies do not leak stack traces or database errors,pass
-  - axis: R
-    name: Responsiveness
-    checks[1]{id,title,result,expected,actual}:
-      R-duration,Baseline answers within the duration budget,pass,<= 1000ms,196ms
+checks[13]{id,result,detail}:
+  V-options,pass,status 200 in 655ms
+  V-post,skipped,state-changing (POST)
+  V-put,skipped,state-changing (PUT)
+  V-patch,skipped,state-changing (PATCH)
+  V-delete,skipped,state-changing (DELETE)
+  A-none,pass,status 401 in 605ms
+  A-invalid,fail,status 200 in 605ms
+  D-baseline,pass,status 200 in 142ms
+  D-content-type,pass,"content-type \"application/json\", body is JSON"
+  D-captures,pass,""
+  E-no-5xx,pass,""
+  E-no-leak,pass,""
+  R-duration,pass,142ms
+failures[1]{id,title,expected,actual,note}:
+  A-invalid,Request with an invalid token is rejected,"status in [401, 403]",status 200 in 605ms,"{\"authenticated\":true,\"token\":\"[REDACTED]\"}"
+hint: "4 state-changing probes not sent; ask the user, then rerun with includeDestructive: true"
 ```
 
 </details>
@@ -120,16 +73,26 @@ Como foi gravado: um script operou o servidor compilado via MCP stdio e salvou a
 
 **3. Uma heurística vale mais que uma personalidade.** O Vander é uma persona, mas o que ele faz é fixo: um checklist montado por código e veredictos calculados a partir de status e tempos. Pesquisa sobre personas em prompts mostrou que elas, sozinhas, não tornam o modelo mais preciso ([fontes](#de-onde-vêm-as-ideias)); por isso a personalidade serve à conversa e o rigor mora em `run_vander_checks`.
 
-## Início rápido
+## Como funciona
+
+Você testa uma API conversando com o seu agente. Três peças tornam isso possível:
+
+| Peça | Onde | O que é | Se você conhece o Postman |
+|------|------|---------|---------------------------|
+| **Definições** | `.mcp/api/*.yaml` | Seus requests, descritos uma vez e versionados junto com o código. | A collection |
+| **Segredos e ambientes** | `.env.mcp.local` | URLs base, tokens e senhas. Fica só na sua máquina. | O environment |
+| **A conversa** | Seu cliente MCP | Você pede em linguagem natural; o agente chama este servidor; o servidor envia o request. | O Send, o Runner e a aba Tests |
+
+## Primeiros passos
 
 Requer **Node.js ≥ 20**.
+
+**1. Compile o servidor e registre no seu cliente MCP.**
 
 ```bash
 npm ci
 npm run build
 ```
-
-Registre o servidor no seu cliente MCP, apontando para `dist/index.js`:
 
 ```json
 {
@@ -143,19 +106,17 @@ Registre o servidor no seu cliente MCP, apontando para `dist/index.js`:
 }
 ```
 
-No projeto que você quer testar, crie `.mcp/api/` e adicione uma definição (veja [`examples/default.example.yaml`](examples/default.example.yaml)):
+**2. Abra o projeto cuja API você quer testar e diga `oi Vander`.**
+
+Ele explica a configuração, confere quais peças o seu projeto já tem e se oferece para criar as que faltam. Ao aceitar, ele roda `init_workspace`, que escreve os três itens abaixo e nunca sobrescreve um arquivo existente. Você também pode criá-los na mão.
+
+**3. A pasta `.mcp/api/` e o seu primeiro YAML.** Um arquivo por serviço. Cada request tem um `id`, que é como você e o agente se referem a ele.
 
 ```yaml
+# .mcp/api/weather.yaml
 version: "1"
 service: weather
 base_url: "{{BASE_URL}}"
-flows:
-  smoke:
-    steps:
-      - get_token
-      - requestId: forecast
-        assert:
-          jsonPathExists: $.days
 endpoints:
   - id: get_token
     method: POST
@@ -173,18 +134,50 @@ endpoints:
       city: lisbon
     auth: Bearer {{TOKEN}}
     auth_dependency: get_token
+flows:
+  smoke:
+    steps:
+      - requestId: forecast
+        assert:
+          status: 200
+          jsonPathExists: $.days
 ```
 
-Coloque os segredos em **`.env.mcp.local`** na raiz do workspace e **nunca faça commit dele**:
+Raramente você precisa escrever isso na mão. **Cole um comando cURL, cole uma collection inteira do Postman (o JSON exportado) ou aponte para um arquivo OpenAPI / Insomnia, e o servidor escreve o YAML para você.** Os tokens que vierem junto vão para o `.env.mcp.local` e são trocados por `{{VARIAVEL}}`, então o YAML continua seguro para commitar.
+
+**4. O arquivo `.env.mcp.local`.** Crie na raiz do projeto, ao lado de `.mcp/`. Ele guarda o que cada `{{...}}` significa. **É você quem preenche, ele precisa estar no `.gitignore`, e os valores nunca vão para o chat.**
 
 ```dotenv
+# .env.mcp.local
 BASE_URL=https://api.example.com/v1
 CLIENT_ID=...
 CLIENT_SECRET=...
 STAGING_BASE_URL=https://staging.example.com/v1
 ```
 
-Depois peça ao agente de forma explícita, por exemplo: *"rode o fluxo `smoke` de `.mcp/api/weather.yaml` pelo MCP"*.
+Um prefixo transforma um YAML em vários ambientes: depois de "usa staging", `{{BASE_URL}}` lê `STAGING_BASE_URL` primeiro e cai para `BASE_URL`.
+
+**5. Peça.** Ainda sem nada para escrever? O `init_workspace` coloca uma demonstração contra o httpbin.org que roda sem nenhum segredo, e [`examples/`](examples/) tem mais três para copiar para `.mcp/api/`.
+
+## O que dá para pedir
+
+Cada linha é algo que você faria na mão em um cliente de API.
+
+| Você diz | O que acontece | No Postman você faria |
+|----------|----------------|------------------------|
+| "Aqui está minha collection do Postman" + o JSON, ou o caminho do arquivo | Converte uma collection, uma spec OpenAPI ou um export do Insomnia para YAML. | Import |
+| "Transforma este cURL em um request" + o comando | Cria o request em um YAML; qualquer token que vier vai para o `.env.mcp.local`. | Import → Raw text |
+| "Roda o `forecast`" | Envia aquele request e resume a resposta. | Clicar em Send |
+| "Roda o fluxo smoke" | Executa os requests de um fluxo em ordem, parando na primeira falha. | Collection Runner |
+| "Faz login e lista os pedidos" | Roda o login antes, guarda o token, usa, e refaz o login em um `401`. | Pre-request script |
+| "Cria um post e depois busca pelo id que voltou" | Captura um valor de uma resposta e usa no request seguinte. | `pm.environment.set` na aba Tests |
+| "Usa staging" | Troca o ambiente ativo para os próximos requests. | Seletor de environment |
+| "Confere se retorna 200 e tem o campo `days`" | Faz asserção de status e de um JSONPath. | `pm.test` na aba Tests |
+| "Inicia a exportação e espera ficar pronta" | Repete um request até um campo aparecer. | Laço com `setNextRequest` |
+| "Mostra o que o `forecast` enviaria" | Monta o request sem enviar, com as credenciais ocultas. | Console |
+| "Adiciona um request que cria um pedido com estes campos" | Escreve uma nova entrada no YAML, mostrando uma prévia antes. | New request |
+| "Rode o eval smoke do assistente" | Envia cada pergunta várias vezes e aprova pela taxa de acerto; confere respostas, citações e latência por código. | — |
+| "Vander, o `forecast` está sólido?" | Revisa o endpoint em seis eixos e relata as evidências. | — |
 
 ## Tools
 
@@ -196,14 +189,18 @@ Depois peça ao agente de forma explícita, por exemplo: *"rode o fluxo `smoke` 
 | `execute_api_request` | Executa um endpoint. |
 | `execute_api_flow` | Executa vários endpoints em uma chamada — `steps` inline ou um `flowName` declarado no YAML. |
 | `dry_run_request` | Mostra o request que seria enviado, sem enviar. |
-| `assert_response` | Asserção sobre a última resposta (`status`, `jsonPathExists`). |
+| `assert_response` | Asserção sobre a última resposta: status, latência e verificações de valor. |
+| `run_eval` | Avalia um endpoint cuja resposta varia (LLM / RAG / busca): casos × repetições, taxa de acerto e, opcionalmente, amostras para o agente julgar. |
 | `set_environment` | Seleciona o ambiente ativo (`CURRENT_ENV`). |
 | `set_environment_variable` / `get_environment_variable` | Variáveis de sessão. |
 | `explain_request_context` | Quais chaves de variável estão disponíveis e de onde vêm. |
+| `init_workspace` | Cria `.mcp/api/`, uma definição de demonstração, o modelo de `.env.mcp.local` e a linha no `.gitignore`. |
 | `upsert_canonical_api_definition` | Cria / acrescenta definições (dry-run por padrão). |
 | `reorganize_mcp_api_definitions` | Funde vários YAMLs em menos arquivos (planeja, depois aplica). |
-| `plan_vander_checks` / `run_vander_checks` | Revisão VANDER de um endpoint: checklist e, depois, execução automática agrupada por eixo. |
-| `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Importa arquivos Postman, OpenAPI ou Insomnia. |
+| `summon_vander` | Entrega ao agente a persona Vander quando você o chama pelo nome. |
+| `plan_vander_checks` / `run_vander_checks` | Revisão VANDER de um endpoint: checklist e, depois, execução automática — uma linha por verificação, com o eixo no prefixo do id. |
+| `import_curl` | Transforma um comando `curl` colado em um request dentro de um YAML. |
+| `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Importa Postman, OpenAPI ou Insomnia — de um arquivo ou de texto colado. |
 
 Ordem recomendada: `list_api_definitions` → `summarize_api_definition` → `set_environment` (se preciso) → `execute_api_request` ou `execute_api_flow`.
 
@@ -222,10 +219,12 @@ O **Vander** é uma persona entregue como prompt MCP: um QA sênior de APIs com 
 
 Cada eixo também traz ideias `manual` (token de outro usuário, valores de limite, idempotência, rate limiting…) que o Vander explora com as tools normais.
 
-As duas tools funcionam sem o prompt também:
+Em clientes sem suporte a prompts — ou quando você preferir só conversar — chame pelo nome: "oi Vander, revisa o `whoami`". As instruções do servidor mandam o agente chamar `summon_vander`, que entrega o mesmo roteiro.
+
+As tools de verificação funcionam sem a persona também:
 
 - `plan_vander_checks` devolve o checklist de um `requestId` e não envia nada.
-- `run_vander_checks` executa as verificações automáticas e devolve pass / fail / skipped por eixo. As sondas nunca capturam variáveis. Tudo que envia `POST`, `PUT`, `PATCH` ou `DELETE` é **pulado, a menos que `includeDestructive: true`**, então revisar um endpoint de escrita é uma decisão explícita.
+- `run_vander_checks` executa as verificações automáticas e devolve pass / fail / skipped por verificação (o prefixo do id é o eixo), com o detalhe das falhas à parte. As sondas nunca capturam variáveis. Tudo que envia `POST`, `PUT`, `PATCH` ou `DELETE` é **pulado, a menos que `includeDestructive: true`**, então revisar um endpoint de escrita é uma decisão explícita.
 
 VANDER parte da heurística VADER, de Stuart Ashman, e acrescenta um eixo Negative explícito — veja [de onde vêm as ideias](#de-onde-vêm-as-ideias).
 
@@ -244,7 +243,7 @@ VANDER parte da heurística VADER, de Stuart Ashman, e acrescenta um eixo Negati
 
 - `base_url` pode ter prefixo de caminho (`https://host/api/v1`); o `path` é anexado a ele. Um `path` absoluto substitui o `base_url`.
 - `params` vai como query string; `headers`, `body` (JSON) e `form` (URL-encoded) são interpolados.
-- `capture` mapeia um nome de variável de sessão para um JSONPath da resposta; `assert` verifica `status` e/ou `jsonPathExists`.
+- `capture` mapeia um nome de variável de sessão para um JSONPath da resposta; `assert` verifica status, latência e valores — veja [verificações de valor](#verificações-de-valor).
 
 ### Autenticação
 
@@ -269,10 +268,78 @@ flows:
         optional: false
 ```
 
+### Verificações de valor
+
+O `assert` (num request, num passo de fluxo ou pelo `assert_response`) aceita `status`, `jsonPathExists`, `maxDurationMs` e uma lista de `checks`. Cada check lê o valor de um JSONPath em `path` — ou o corpo inteiro como texto, quando `path` é omitido — e todos os operadores nele precisam valer. Todas as verificações que falham são relatadas, não só a primeira.
+
+| Operador | Vale quando |
+|----------|-------------|
+| `contains` / `containsAny` / `notContains` | O texto tem todas / alguma / nenhuma das strings dadas. |
+| `matches` | O texto casa com a expressão regular. |
+| `ignoreCase` | Torna os quatro acima insensíveis a maiúsculas. |
+| `equals` | O valor é exatamente este (qualquer valor JSON). |
+| `min` / `max` | O número está dentro dos limites. |
+| `minLength` / `maxLength` | A string ou lista tem essa quantidade de caracteres / itens. |
+| `includesAll` / `includesAny` | A lista em `path` contém todos / algum destes valores. Com `minRatio`, o `includesAll` exige só essa fração — é o recall da recuperação. |
+| `subsetOf` | Todo valor em `path` também aparece neste outro JSONPath — citações entre os documentos recuperados. |
+
+Um operador que o servidor não conhece é erro na leitura do YAML, nunca uma aprovação silenciosa.
+
+### Evals: endpoints cuja resposta varia
+
+Um request para um LLM, um RAG ou uma busca pode voltar diferente a cada vez, então uma execução verde prova pouco. Um eval envia um request sobre vários **casos**, cada um **repetido**, e aprova o caso pela **taxa de acerto**:
+
+```yaml
+evals:
+  smoke:
+    requestId: ask
+    repeat: 3          # cada caso é enviado 3 vezes
+    passRate: 0.66     # e passa quando 2 das 3 execuções atendem ao `expect`
+    expect:            # aplicado a todo caso
+      status: 200
+      maxDurationMs: 8000
+      checks:
+        - path: $.citations
+          subsetOf: $.sources[*].id      # nenhuma citação inventada
+    judge:             # opcional: amostras para o agente avaliar
+      answerPath: $.answer
+      contextPath: $.sources[*].text
+      questionVariable: question
+    cases:
+      - name: refund_window
+        variables: { question: How many days do I have to ask for a refund? }
+        reference: 30 days from delivery.
+        expect:
+          checks:
+            - { path: $.answer, contains: "30" }
+            - { path: $.sources[*].id, includesAll: [policy-refunds, faq-returns], minRatio: 0.5 }
+      - name: out_of_scope
+        variables: { question: Who will win the next election? }
+        expect:
+          checks:
+            - { path: $.answer, matches: "(don't|do not|cannot) (know|answer)", ignoreCase: true }
+            - { path: $.citations, maxLength: 0 }
+```
+
+Rode com "rode o eval smoke" (`run_eval` + `evalName`), ou passe `requestId` e `cases` inline. O resultado traz uma linha por caso (`passed: 2/3`, latência, quantas respostas diferentes voltaram), as falhas distintas com a frequência de cada uma e a latência p50 / p95.
+
+Saem dele dois tipos de veredito, mantidos separados:
+
+- **Verificado por código** — tudo que está em `expect`. Mesma entrada, mesmo veredito: status, latência, palavras que devem ou não aparecer, recusa para perguntas fora de escopo, documentos esperados entre os recuperados, citações que apontam para documentos recuperados.
+- **Avaliado pelo agente** — com `judge`, o resultado leva uma amostra por caso (pergunta, resposta, trechos recuperados, referência) e uma rubrica: `faithfulness`, `relevance`, `context_relevance`, `correctness`, ou critérios nas suas palavras. O servidor não chama modelo nenhum; quem avalia é o agente com quem você está conversando, então o veredito depende desse modelo e é relatado como julgamento.
+
+O que vale saber:
+
+- Cada execução é um request de verdade, em geral pago. O `run_eval` se recusa a começar quando casos × repetições passa de `maxRequests` (padrão 30).
+- As execuções de um eval não capturam variáveis nem substituem a última resposta da sessão; o `auth_dependency` continua fazendo login quando preciso.
+- Uma resposta em streaming (`text/event-stream`) é dobrada em `{ text, eventCount, events }`: `$.text` é a resposta e `events` guarda o que não era pedaço de texto (fontes, uso, motivo de parada). Use `sse.textPath` no request quando o pedaço de texto estiver num lugar incomum.
+- [`examples/rag.example.yaml`](examples/rag.example.yaml) é um ponto de partida completo.
+
 ## Mantendo a saída pequena
 
-- `responseDetail: "minimal"` devolve só status, duração e capturas; `"summary"` (padrão) acrescenta um preview do corpo limitado a 8.000 caracteres; `"full"` sobe o limite para 50.000.
-- `jsonPathSelect` projeta o corpo antes de serializar.
+- `responseDetail: "minimal"` devolve só status, duração e capturas; `"summary"` (padrão) acrescenta o corpo, limitado a 8.000 caracteres, e os headers que costumam importar (`content-type`, `location`, `retry-after`, rate limit…); `"full"` devolve todos os headers e sobe o limite para 50.000.
+- O corpo volta uma vez só: `bodyJson` para JSON, `bodyPreview` para texto. Os dois juntos só quando o JSON passa do limite (preview truncado mais `topLevelKeys`).
+- `jsonPathSelect` projeta o corpo antes de serializar. Num step do `execute_api_flow` ele devolve o corpo daquele step, sem precisar de uma segunda chamada.
 - `execute_api_flow` troca N chamadas de tool por uma.
 - Definições parseadas e o `.env.mcp.local` ficam em cache na memória, invalidado pelo `mtime` do arquivo.
 
@@ -283,12 +350,12 @@ O servidor roda localmente com os seus privilégios e é dirigido por um LLM; tr
 - **Redação.** Headers de autenticação, valores sob chaves JSON com cara de credencial (`password`, `token`, `secret`, `api_key`, …), strings com formato de JWT, parâmetros de query com credenciais e credenciais capturadas voltam como `[REDACTED]`. Os valores reais continuam na sessão e seguem sendo usados nos requests seguintes. A redação se baseia em nome e formato: é uma rede de segurança, não uma garantia.
 - **Sem acesso implícito ao ambiente.** O `process.env` não faz parte do contexto de interpolação; só os nomes listados em `MCP_API_ENV_PASSTHROUGH` são alcançáveis, via `{{env.NOME}}`.
 - **Respostas são dados.** Valores capturados de uma resposta são inseridos literalmente e nunca reexpandidos como template.
-- **Escritas ficam confinadas** a `.mcp/api/` e são dry-run por padrão.
+- **Escritas ficam confinadas.** As tools de definição escrevem só em `.mcp/api/` e são dry-run por padrão. O `init_workspace` também cria o `.env.mcp.local` e o adiciona ao `.gitignore`, e nunca sobrescreve um arquivo existente. As tools de importação acrescentam ao `.env.mcp.local` as credenciais que extraem, sem nunca substituir uma chave que já exista.
 - **Allowlist de hosts opcional.** `MCP_API_ALLOWED_HOSTS` restringe os requests — inclusive cada salto de redirect — aos hostnames listados. Vem desligada e não é uma defesa completa contra SSRF (não verifica faixas privadas nem DNS rebinding).
 
 | Variável de ambiente | Efeito |
 |----------------------|--------|
-| `MCP_WORKSPACE_ROOT` | `workspaceRoot` padrão quando a chamada da tool omite. |
+| `MCP_WORKSPACE_ROOT` | `workspaceRoot` padrão quando a chamada da tool omite. Sem ela, o servidor reusa o último `workspaceRoot` recebido e, na falta, o diretório em que foi iniciado, se ali já existir `.mcp/api/`. |
 | `MCP_API_ALLOWED_HOSTS` | Hostnames permitidos, separados por vírgula. Sem valor = qualquer host. |
 | `MCP_API_ENV_PASSTHROUGH` | Nomes de variáveis de ambiente (`*` no fim = prefixo) expostos a `{{env.NOME}}`. Sem valor = nenhum. |
 | `MCP_API_MAX_RESPONSE_BYTES` | Limite de tamanho da resposta. Padrão 10 MB. |

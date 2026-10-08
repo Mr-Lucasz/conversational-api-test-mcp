@@ -25,20 +25,47 @@ const createIfMissingSchema = z
   })
   .optional();
 
+const upsertShape = {
+  workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
+  targetRelativePath: z
+    .string()
+    .describe(
+      "Path under workspace, must be under .mcp/api/, e.g. .mcp/api/weather/staging.yaml",
+    ),
+  dryRun: z.boolean().optional().default(true),
+  confirm: z.boolean().optional(),
+  mergeMode: z.enum(["append_endpoints", "replace_file"]),
+  createIfMissing: createIfMissingSchema,
+};
+
+const ENDPOINT_KEYS =
+  "id, method, path; optional description, headers, params, body | form, auth | digest_auth {username,password}, auth_dependency, auth_retry_on_401, capture {var: jsonPath}, assert {status, jsonPathExists, maxDurationMs, checks[]}, sse {textPath}";
+
+/**
+ * O que vai no `tools/list`. Um schema com `.superRefine()` vira ZodEffects e o SDK
+ * publica `properties: {}` — o cliente ficava sem ver nenhum parâmetro. Aqui os
+ * endpoints são rasos de propósito (o schema completo duas vezes pesaria em toda
+ * conversa); a validação completa é a do handler, abaixo.
+ */
+export const upsertCanonicalApiDefinitionToolSchema = z.object({
+  ...upsertShape,
+  replaceDefinition: z
+    .record(z.unknown())
+    .optional()
+    .describe(
+      "Whole definition: version, service, base_url, variables, flows, evals, endpoints[] (same shape as appendEndpoints items).",
+    ),
+  appendEndpoints: z
+    .array(z.record(z.unknown()))
+    .optional()
+    .describe(`Endpoints to append. Each: ${ENDPOINT_KEYS}.`),
+});
+
 export const upsertCanonicalApiDefinitionInputSchema = z
   .object({
-    workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
-    targetRelativePath: z
-      .string()
-      .describe(
-        "Path under workspace, must be under .mcp/api/, e.g. .mcp/api/weather/staging.yaml",
-      ),
-    dryRun: z.boolean().optional().default(true),
-    confirm: z.boolean().optional(),
-    mergeMode: z.enum(["append_endpoints", "replace_file"]),
+    ...upsertShape,
     replaceDefinition: apiDefinitionYamlSchema.optional(),
     appendEndpoints: z.array(endpointSchema).optional(),
-    createIfMissing: createIfMissingSchema,
   })
   .superRefine((data, ctx) => {
     if (data.mergeMode === "replace_file" && data.replaceDefinition === undefined) {

@@ -5,6 +5,14 @@ export const REDACTED = "[REDACTED]";
 const SENSITIVE_NAME =
   /(pass(word|wd)?|secret|token|authorization|api[-_]?key|cookie|session[-_]?id|credential|private[-_]?key|signature)/i;
 
+/**
+ * Usage figures of LLM APIs, not credentials: a number under `total_tokens` /
+ * `token_count`, or the `*_tokens_details` breakdown. Deliberately narrow — a
+ * `tokens: { access: … }` object is still a credential.
+ */
+const TOKEN_COUNT_NAME = /_tokens$|token_?count$/i;
+const TOKEN_DETAILS_NAME = /_tokens_details$/i;
+
 const JWT_LIKE = /^eyJ[\w-]+\.[\w-]+\.[\w-]*$/;
 
 /** `MCP_API_REVEAL_SECRETS=true` turns masking off (local debugging only). */
@@ -59,7 +67,14 @@ function redactNode(
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
-      out[k] = redactNode(v, forced || isSensitiveName(k), state);
+      const usageFigure =
+        (typeof v === "number" && TOKEN_COUNT_NAME.test(k)) ||
+        (v !== null && typeof v === "object" && TOKEN_DETAILS_NAME.test(k));
+      out[k] = redactNode(
+        v,
+        forced || (isSensitiveName(k) && !usageFigure),
+        state,
+      );
     }
     return out;
   }

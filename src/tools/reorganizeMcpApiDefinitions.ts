@@ -9,6 +9,7 @@ import {
 } from "../canonical/io.js";
 import type { ApiDefinitionYaml } from "../canonical/schema.js";
 import { mcpApiDir, safeResolveMcpApiYaml } from "../workspace/paths.js";
+import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
 import { safeTool, textResult } from "./toolResult.js";
 import { z } from "zod";
 
@@ -18,17 +19,19 @@ const manualGroupSchema = z.object({
   sourceGlobs: z.array(z.string()).min(1),
 });
 
-export const reorganizeMcpApiDefinitionsInputSchema = z
-  .object({
-    workspaceRoot: z.string(),
-    mode: z.enum(["plan", "apply"]),
-    groupBy: z.enum(["manual_groups", "same_service_field"]),
-    manualGroups: z.array(manualGroupSchema).optional(),
-    confirm: z.boolean().optional(),
-    deleteSourcesAfterMerge: z.boolean().optional().default(false),
-    moveSourcesToArchive: z.boolean().optional().default(false),
-  })
-  .superRefine((data, ctx) => {
+/** Publicado no `tools/list`: com `.superRefine()` o SDK publicaria `properties: {}`. */
+export const reorganizeMcpApiDefinitionsToolSchema = z.object({
+  workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
+  mode: z.enum(["plan", "apply"]),
+  groupBy: z.enum(["manual_groups", "same_service_field"]),
+  manualGroups: z.array(manualGroupSchema).optional(),
+  confirm: z.boolean().optional(),
+  deleteSourcesAfterMerge: z.boolean().optional().default(false),
+  moveSourcesToArchive: z.boolean().optional().default(false),
+});
+
+export const reorganizeMcpApiDefinitionsInputSchema =
+  reorganizeMcpApiDefinitionsToolSchema.superRefine((data, ctx) => {
     if (data.groupBy === "manual_groups" && !data.manualGroups?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -233,7 +236,8 @@ export async function reorganizeMcpApiDefinitionsHandler(
   }
   const d = parsed.data;
   return safeTool(async () => {
-    const root = resolve(d.workspaceRoot);
+    const workspaceRoot = resolveWorkspaceRoot(d.workspaceRoot);
+    const root = resolve(workspaceRoot);
     const apiDir = mcpApiDir(root);
     if (!existsSync(apiDir)) {
       return {
@@ -255,12 +259,12 @@ export async function reorganizeMcpApiDefinitionsHandler(
       for (const mg of d.manualGroups ?? []) {
         const { files, parseErrors } = collectSourcesForGlobs(
           apiDir,
-          d.workspaceRoot,
+          workspaceRoot,
           mg.sourceGlobs,
         );
         parseErrorsAcc = parseErrorsAcc.concat(parseErrors);
         const { planned: row, merged } = planOneGroup(
-          d.workspaceRoot,
+          workspaceRoot,
           mg.targetRelativePath,
           files,
         );
@@ -274,11 +278,11 @@ export async function reorganizeMcpApiDefinitionsHandler(
         }
       }
     } else {
-      const { groups, parseErrors } = buildSameServiceGroups(apiDir, d.workspaceRoot);
+      const { groups, parseErrors } = buildSameServiceGroups(apiDir, workspaceRoot);
       parseErrorsAcc = parseErrorsAcc.concat(parseErrors);
       for (const g of groups) {
         const { planned: row, merged } = planOneGroup(
-          d.workspaceRoot,
+          workspaceRoot,
           g.targetRelativePath,
           g.files,
         );
@@ -315,12 +319,12 @@ export async function reorganizeMcpApiDefinitionsHandler(
     const removedOrMoved: string[] = [];
 
     const targetAbsFor = (rel: string) =>
-      safeResolveMcpApiYaml(d.workspaceRoot, rel);
+      safeResolveMcpApiYaml(workspaceRoot, rel);
 
     for (const row of mergePayloads) {
       const targetAbs = targetAbsFor(row.targetRelativePath);
       const backup = backupApiDefinitionFileIfExists(targetAbs);
-      backups.push(backup ? workspaceRelative(d.workspaceRoot, backup) : null);
+      backups.push(backup ? workspaceRelative(workspaceRoot, backup) : null);
       writeApiDefinitionFileAtomic(targetAbs, row.merged);
       written.push(row.targetRelativePath);
 
@@ -335,7 +339,7 @@ export async function reorganizeMcpApiDefinitionsHandler(
           const stamp = Date.now();
           const dest = join(archiveDir, `${basename(src.absolutePath)}.${stamp}.yaml`);
           renameSync(src.absolutePath, dest);
-          removedOrMoved.push(workspaceRelative(d.workspaceRoot, dest));
+          removedOrMoved.push(workspaceRelative(workspaceRoot, dest));
         } else if (d.deleteSourcesAfterMerge) {
           unlinkSync(src.absolutePath);
           removedOrMoved.push(src.relativeToWorkspace);

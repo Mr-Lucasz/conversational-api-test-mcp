@@ -2,11 +2,11 @@ import { listApiDefinitionsHandler, listApiDefinitionsInputSchema } from "../too
 import { readApiDefinitionHandler, readApiDefinitionInputSchema } from "../tools/readApiDefinition.js";
 import {
   upsertCanonicalApiDefinitionHandler,
-  upsertCanonicalApiDefinitionInputSchema,
+  upsertCanonicalApiDefinitionToolSchema,
 } from "../tools/upsertCanonicalApiDefinition.js";
 import {
   reorganizeMcpApiDefinitionsHandler,
-  reorganizeMcpApiDefinitionsInputSchema,
+  reorganizeMcpApiDefinitionsToolSchema,
 } from "../tools/reorganizeMcpApiDefinitions.js";
 import {
   discoverLegacySourcesHandler,
@@ -46,7 +46,7 @@ import {
 } from "../tools/summarizeApiDefinition.js";
 import {
   executeApiFlowHandler,
-  executeApiFlowInputSchema,
+  executeApiFlowToolSchema,
 } from "../tools/executeApiFlow.js";
 import {
   dryRunRequestHandler,
@@ -57,7 +57,15 @@ import {
   planVanderChecksInputSchema,
   runVanderChecksHandler,
   runVanderChecksInputSchema,
+  summonVanderHandler,
+  summonVanderInputSchema,
 } from "../tools/vanderChecks.js";
+import {
+  initWorkspaceHandler,
+  initWorkspaceInputSchema,
+} from "../tools/initWorkspace.js";
+import { importCurlHandler, importCurlInputSchema } from "../tools/importCurl.js";
+import { runEvalHandler, runEvalInputSchema } from "../tools/runEval.js";
 import type { z } from "zod";
 
 export type ToolDefinition = {
@@ -75,14 +83,14 @@ export function getAllToolDefinitions(): ToolDefinition[] {
     {
       name: "list_api_definitions",
       description:
-        "List YAML API definition files under `.mcp/api/` in the workspace. Optional `globPattern` (glob relative to `.mcp/api/`, default **/*.{yaml,yml}), `maxFiles`/`cursor` for pagination (returns `nextCursor` when truncated — pass it back to get the next page), `sortBy` path | mtime_asc | mtime_desc, `fields` to project `entries` items. Returns `totalMatched` and `truncated` when capped.",
+        "List YAML API definition files under `.mcp/api/`. Returns `files` (paths), or `entries` (path/service/summary) with `includeCatalogMeta` or `query`; plus `totalMatched`, `truncated` and, when capped by `maxFiles`, a `nextCursor` to pass back as `cursor`.",
       inputSchema: listApiDefinitionsInputSchema,
       handler: listApiDefinitionsHandler,
     },
     {
       name: "read_api_definition",
       description:
-        "Read and validate a canonical API YAML (Zod). Path is relative to workspaceRoot.",
+        "Read and validate a whole API YAML definition. Prefer summarize_api_definition for triage.",
       inputSchema: readApiDefinitionInputSchema,
       handler: readApiDefinitionHandler,
     },
@@ -90,14 +98,14 @@ export function getAllToolDefinitions(): ToolDefinition[] {
       name: "upsert_canonical_api_definition",
       description:
         "Create or update a canonical YAML under `.mcp/api/` only. `mergeMode` replace_file (requires `replaceDefinition`) or append_endpoints (requires `appendEndpoints`). New file on append needs `createIfMissing`. Default `dryRun` true returns `preview` without writing; set `dryRun` false and `confirm` true to write (atomic replace + optional .bak backup). Endpoint ids must not collide on append.",
-      inputSchema: upsertCanonicalApiDefinitionInputSchema,
+      inputSchema: upsertCanonicalApiDefinitionToolSchema,
       handler: upsertCanonicalApiDefinitionHandler,
     },
     {
       name: "reorganize_mcp_api_definitions",
       description:
         "Plan or apply merging multiple YAML definitions into fewer files. `mode` plan (no writes) or apply (requires `confirm` true). `groupBy` manual_groups (requires `manualGroups` with targetRelativePath + sourceGlobs relative to `.mcp/api/`) or same_service_field (auto groups files sharing non-empty `service` into `.mcp/api/_consolidated/*.yaml`). Conflicts (duplicate endpoint id across files, mismatched base_url/service/variables) block apply. Optional `deleteSourcesAfterMerge` or `moveSourcesToArchive` (mutually exclusive).",
-      inputSchema: reorganizeMcpApiDefinitionsInputSchema,
+      inputSchema: reorganizeMcpApiDefinitionsToolSchema,
       handler: reorganizeMcpApiDefinitionsHandler,
     },
     {
@@ -110,14 +118,21 @@ export function getAllToolDefinitions(): ToolDefinition[] {
     {
       name: "convert_legacy_to_canonical",
       description:
-        "Convert Postman / OpenAPI / Insomnia export to canonical YAML under `.mcp/api/`. Apidog: export as OpenAPI or Postman first.",
+        "Turn a Postman collection, an OpenAPI/Swagger spec or an Insomnia export into a YAML definition under `.mcp/api/`. Give `legacyRelativePath` for a file in the workspace, or `legacyContent` with the JSON/YAML text the user pasted. Literal credentials found in headers or auth are moved to `.env.mcp.local` and replaced by `{{VARIABLE}}`. Refuses to replace an existing file unless `overwrite` is true. Apidog: export as OpenAPI or Postman first.",
       inputSchema: convertLegacyToCanonicalInputSchema,
       handler: convertLegacyToCanonicalHandler,
     },
     {
+      name: "import_curl",
+      description:
+        "Turn a `curl` command the user pasted into a request in a YAML definition under `.mcp/api/` (creates the file, or appends to it). Method, URL, query string, headers and JSON / form body are carried over. Credentials (Authorization, cookies, `-u`, credential-looking fields) are moved to `.env.mcp.local` and replaced by `{{VARIABLE}}`, so the YAML stays safe to commit. Fails if `requestId` already exists.",
+      inputSchema: importCurlInputSchema,
+      handler: importCurlHandler,
+    },
+    {
       name: "execute_api_request",
       description:
-        "Run one endpoint from canonical YAML: interpolate variables (YAML < .env.mcp.local < session; `{{env.NAME}}` reads process.env only for names in MCP_API_ENV_PASSTHROUGH). With session CURRENT_ENV from set_environment: {CURRENT_ENV}_KEY wins over generic KEY; unresolved placeholders stay literal {{KEY}} for visibility. Macros {{$uuid}}, {{$date:...}}, {{$timestamp}}; optional `form:` for OAuth; auth_dependency + capture + 401 retry; fetch; JSONPath capture; optional assert. Credential-looking values (captured tokens, sensitive JSON keys, auth headers) are returned as [REDACTED]; the real values stay in the session. Response: for JSON bodies, `bodyJson` is the parsed object when the payload is small enough; very large JSON returns a minimal wrapper with `topLevelKeys` plus truncated `bodyPreview`. Non-JSON (HTML, plain text) only has `bodyPreview`. `bodyPreviewTruncated` is true when the preview string was capped by length.",
+        "Send one request from a YAML definition. Variables resolve YAML < .env.mcp.local < session (after set_environment, {ENV}_KEY wins over KEY); an unresolved placeholder is sent as the literal {{KEY}}. Runs `auth_dependency` first when needed, retries once on 401, applies `capture` and `assert`. The body comes back once: `bodyJson` for JSON that fits the cap, `bodyPreview` for text; JSON over the cap gives a truncated `bodyPreview` plus `bodyJson.topLevelKeys` — narrow it with `jsonPathSelect`. `responseDetail`: minimal = status only; summary = body (8k chars) and the headers that matter; full = every header, 50k chars.",
       inputSchema: executeApiRequestInputSchema,
       handler: executeApiRequestHandler,
     },
@@ -143,7 +158,7 @@ export function getAllToolDefinitions(): ToolDefinition[] {
     {
       name: "assert_response",
       description:
-        "Assert on the last HTTP response (status, jsonPathExists). Run after execute_api_request.",
+        "Assert on the last HTTP response: status, jsonPathExists, maxDurationMs and value `checks` (contains, regex, equality, ranges, list membership). Reports every check that failed. Run after execute_api_request.",
       inputSchema: assertResponseInputSchema,
       handler: assertResponseHandler,
     },
@@ -164,9 +179,16 @@ export function getAllToolDefinitions(): ToolDefinition[] {
     {
       name: "execute_api_flow",
       description:
-        "Run a sequence of requestIds in a single MCP round trip. Pass inline `steps`, or `flowName` to run a flow declared under `flows:` in the definition. Each step supports retry, poll (via jsonPath), an inline assert (status/jsonPathExists, no extra round trip) and `optional`; `stopOnError` halts at the first failing required step.",
-      inputSchema: executeApiFlowInputSchema,
+        "Run a sequence of requestIds in a single MCP round trip. Pass inline `steps`, or `flowName` to run a flow declared under `flows:` in the definition. Each step supports retry, poll (via jsonPath), an inline `assert` (same shape as assert_response), `optional`, and `jsonPathSelect` to get that step's body back (`$` for all of it) without a follow-up call. `stopOnError` halts at the first failing required step.",
+      inputSchema: executeApiFlowToolSchema,
       handler: executeApiFlowHandler,
+    },
+    {
+      name: "run_eval",
+      description:
+        "Evaluate an endpoint whose answer varies (LLM / RAG / search) — or any endpoint over many inputs — in one call. Runs each case `repeat` times and passes it when `passRate` of the runs satisfy `expect`; returns one row per case, the distinct failures, latency p50/p95 and how many different answers came back. With `judge` it also returns question / answer / retrieved passages for you to grade what code cannot (faithfulness, relevance). Runs do not capture variables or replace the session's last response. Every run is a real, possibly paid, request.",
+      inputSchema: runEvalInputSchema,
+      handler: runEvalHandler,
     },
     {
       name: "dry_run_request",
@@ -176,16 +198,30 @@ export function getAllToolDefinitions(): ToolDefinition[] {
       handler: dryRunRequestHandler,
     },
     {
+      name: "summon_vander",
+      description:
+        "Call this whenever the user addresses Vander by name (\"hi Vander\", \"oi Vander\", \"Vander, review X\") or asks for a VANDER review. Pass `workspaceRoot`. Returns the Vander persona brief and, when no endpoint was named, an onboarding: what this server is, the three pieces it needs (`.mcp/api/` YAML, `.env.mcp.local`, the conversation), which of them this workspace already has, and what the user can ask for. Adopt the persona for the rest of the conversation and follow its working method. Sends no HTTP request.",
+      inputSchema: summonVanderInputSchema,
+      handler: summonVanderHandler,
+    },
+    {
+      name: "init_workspace",
+      description:
+        "Create the starting structure in a project: the `.mcp/api/` folder, a runnable demo definition (`demo.yaml`, against httpbin.org) when there is no definition yet, an `.env.mcp.local` template with commented examples, and the `.gitignore` line that keeps that file out of git. Never overwrites an existing file. Ask the user before calling it.",
+      inputSchema: initWorkspaceInputSchema,
+      handler: initWorkspaceHandler,
+    },
+    {
       name: "plan_vander_checks",
       description:
-        "Build the VANDER checklist (Verbs, Authorization, Negative, Data, Errors, Responsiveness) for one requestId, derived deterministically from its definition. Sends nothing. Each check is `auto` (run_vander_checks can execute it; `destructive` marks state-changing probes) or `manual` (an idea to explore by hand).",
+        "Build the VANDER checklist (Verbs, Authorization, Negative, Data, Errors, Responsiveness) for one requestId, derived deterministically from its definition. Sends nothing. The id prefix is the axis (`V-`, `A-`, …). `mode`: `auto` (run_vander_checks executes it), `destructive` (auto, but state-changing) or `manual` (an idea to explore by hand).",
       inputSchema: planVanderChecksInputSchema,
       handler: planVanderChecksHandler,
     },
     {
       name: "run_vander_checks",
       description:
-        "Execute the automatic VANDER checks for one requestId and return pass/fail/skipped grouped by axis. Probes vary method, credentials and body; they never capture variables or replace the session's last response. State-changing probes (any POST/PUT/PATCH/DELETE) are skipped unless `includeDestructive` is true — ask the user before enabling it. `maxDurationMs` is the budget for the Responsiveness check.",
+        "Execute the automatic VANDER checks for one requestId. Returns one row per check (`id`, whose prefix is the axis; `result` pass/fail/skipped; `detail` with the evidence) and `failures` with expected/actual/body snippet. Probes vary method, credentials and body; they never capture variables or replace the session's last response. State-changing probes (any POST/PUT/PATCH/DELETE) are skipped unless `includeDestructive` is true — ask the user before enabling it. `maxDurationMs` is the budget for the Responsiveness check.",
       inputSchema: runVanderChecksInputSchema,
       handler: runVanderChecksHandler,
     },

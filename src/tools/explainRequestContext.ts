@@ -4,7 +4,7 @@ import { loadEnvMcpLocalParsed } from "../env/loadEnvMcpLocal.js";
 import { getSession } from "../session/SessionStore.js";
 import { parseApiDefinitionYaml } from "../canonical/io.js";
 import { safeResolveUnderWorkspace } from "../workspace/paths.js";
-import { safeTool, textResult } from "./toolResult.js";
+import { omitNullish, safeTool, textResult } from "./toolResult.js";
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
 
 export const explainRequestContextInputSchema = z.object({
@@ -41,16 +41,15 @@ export async function explainRequestContextHandler(
     const ep = parsed.data.requestId
       ? def.endpoints.find((e) => e.id === parsed.data.requestId)
       : undefined;
-    const currentEnv = sess.variables.CURRENT_ENV;
-    return {
+    return omitNullish({
       service: def.service ?? def.name,
       base_url: def.base_url,
       yamlVariableKeys: Object.keys(def.variables ?? {}),
       envMcpLocalKeys: envKeys,
       sessionVariableKeys: Object.keys(sess.variables),
-      currentEnvironment: currentEnv ?? null,
+      currentEnvironment: sess.variables.CURRENT_ENV,
       hasLastResponse: Boolean(sess.lastResponse),
-      endpoint: ep ?? null,
-    };
+      endpoint: ep,
+    });
   });
 }

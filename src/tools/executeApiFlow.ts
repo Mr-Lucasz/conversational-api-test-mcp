@@ -3,19 +3,21 @@ import { JSONPath } from "jsonpath-plus";
 import { readApiDefinitionFile } from "../canonical/io.js";
 import { loadEnvMcpLocalParsed } from "../env/loadEnvMcpLocal.js";
 import { runEndpointWithDefinition, type ExecuteOutputOptions } from "../http/runEndpoint.js";
+import { redactJsonText } from "../http/redact.js";
 import { getLastResponse } from "../session/SessionStore.js";
 import { assertOnResponse } from "../assertion/assertResponse.js";
 import { safeResolveUnderWorkspace } from "../workspace/paths.js";
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
-import { safeTool, textResult } from "./toolResult.js";
+import { omitNullish, safeTool, textResult } from "./toolResult.js";
 import type { ExecuteResult } from "../http/executeTypes.js";
 import {
+  ASSERT_HINT,
   flowStepSchema,
   type ApiDefinitionYaml,
   type FlowStep,
 } from "../canonical/schema.js";
 
-export const executeApiFlowInputSchema = z.object({
+const flowShape = {
   workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
   definitionRelativePath: z.string(),
   steps: z
@@ -30,9 +32,31 @@ export const executeApiFlowInputSchema = z.object({
   responseDetail: z
     .enum(["minimal", "summary", "per_step"])
     .optional()
-    .default("per_step"),
+    .default("summary")
+    .describe(
+      "minimal: requestId/ok/status per step. summary: + durationMs and captured values. per_step: + each step's body (capped). A step's own `jsonPathSelect` returns its body at any level.",
+    ),
   stopOnError: z.boolean().optional().default(true),
+};
+
+export const executeApiFlowInputSchema = z.object(flowShape);
+
+/** Published in `tools/list`: the step `assert` as a hint, not the whole check schema. */
+export const executeApiFlowToolSchema = z.object({
+  ...flowShape,
+  steps: z
+    .array(
+      flowStepSchema.extend({
+        assert: z.record(z.unknown()).optional().describe(ASSERT_HINT),
+      }),
+    )
+    .min(1)
+    .optional()
+    .describe("Inline steps. Provide either `steps` or `flowName`."),
 });
+
+/** Cap do corpo devolvido por step — um flow soma vários. */
+const STEP_BODY_CHARS = 2_000;
 
 function isStatusAccepted(status: number, acceptStatus?: number[]): boolean {
   if (acceptStatus && acceptStatus.length > 0) {
@@ -140,11 +164,6 @@ export async function executeApiFlowHandler(
     const envLocal = loadEnvMcpLocalParsed(workspaceRoot);
     const steps = resolveSteps(def, inlineSteps, flowName);
 
-    const outputOptions: ExecuteOutputOptions =
-      responseDetail === "minimal"
-        ? { responseDetail: "minimal" }
-        : { responseDetail: "summary" };
-
     const stepResults: Array<{
       requestId: string;
       ok: boolean;
@@ -153,12 +172,24 @@ export async function executeApiFlowHandler(
       captureApplied: Record<string, string>;
       captureErrors: string[];
       errorPreview?: string;
+      body?: unknown;
     }> = [];
 
     let okOverall = true;
 
     for (const step of steps) {
       const { requestId, optional, retry, poll, acceptStatus, assert } = step;
+
+      const wantsBody =
+        step.jsonPathSelect !== undefined || responseDetail === "per_step";
+      const outputOptions: ExecuteOutputOptions =
+        responseDetail === "minimal" && !wantsBody
+          ? { responseDetail: "minimal" }
+          : {
+              responseDetail: "summary",
+              maxBodyChars: STEP_BODY_CHARS,
+              jsonPathSelect: step.jsonPathSelect,
+            };
 
       const retryMax = retry?.max ?? 1;
       const retryDelayMs = retry?.delayMs ?? 0;
@@ -229,12 +260,26 @@ export async function executeApiFlowHandler(
         }
       }
 
+      // O corpo do step vem em `bodyJson` (JSON que coube no cap) ou `bodyPreview`.
+      const stepBody =
+        last && last.ok
+          ? last.bodyPreviewTruncated
+            ? last.bodyPreview
+            : (last.bodyJson ?? last.bodyPreview)
+          : undefined;
+
       const summaryErrorPreview =
         assertMessage ??
         (last && last.ok
-          ? last.bodyPreview
-            ? String(last.bodyPreview).slice(0, 400)
-            : undefined
+          ? stepBody === undefined
+            ? // `minimal` não traz corpo; num step que falhou ele poupa a chamada de diagnóstico.
+              redactJsonText(
+                getLastResponse(workspaceRoot)?.bodyText ?? "",
+              ).slice(0, 400) || undefined
+            : (typeof stepBody === "string"
+                ? stepBody
+                : JSON.stringify(stepBody)
+              ).slice(0, 400)
           : last && !last.ok
             ? last.message
             : undefined);
@@ -247,6 +292,8 @@ export async function executeApiFlowHandler(
         captureApplied: last && last.ok ? (last.captureApplied ?? {}) : {},
         captureErrors: last && last.ok ? (last.captureErrors ?? []) : ["exec-failed"],
         errorPreview: lastOk ? undefined : summaryErrorPreview,
+        // Num step que falhou o corpo já está em `errorPreview`.
+        body: lastOk && wantsBody ? stepBody : undefined,
       });
 
       if (!lastOk && !optional) {
@@ -264,13 +311,18 @@ export async function executeApiFlowHandler(
 
     // Omite captureApplied/captureErrors por step quando vazios — comum quando o
     // endpoint não define `capture` — em vez de pagar `{}`/`[]` em cada step do flow.
+    // `minimal` também corta duração e valores capturados (os nomes seguem em `summary`).
     const stepsOut = stepResults.map((s) => {
-      const { captureApplied, captureErrors, ...rest } = s;
-      return {
+      const { captureApplied, captureErrors, durationMs, ...rest } = s;
+      const lean = responseDetail === "minimal";
+      return omitNullish({
         ...rest,
-        ...(Object.keys(captureApplied).length > 0 ? { captureApplied } : {}),
+        ...(lean ? {} : { durationMs }),
+        ...(!lean && Object.keys(captureApplied).length > 0
+          ? { captureApplied }
+          : {}),
         ...(captureErrors.length > 0 ? { captureErrors } : {}),
-      };
+      });
     });
 
     return {
