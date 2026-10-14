@@ -20,6 +20,36 @@ describe("legacy parsers", () => {
     expect(r.losses.length).toBe(0);
   });
 
+  it("takes base_url from the Postman collection variable and keeps the query string", () => {
+    const raw = JSON.parse(
+      readFileSync(join(fixtures, "postman-variables.json"), "utf8"),
+    ) as unknown;
+    const r = parseLegacyToCanonical(raw, { serviceName: "t" });
+    expect(r.canonical.variables?.base_url).toBe("https://api.example.com/v1");
+    expect(r.canonical.endpoints[0].path).toBe("/comments?postId=1");
+    expect(r.canonical.endpoints[1].path).toBe("/health");
+    expect(r.losses.map((l) => l.code)).not.toContain("POSTMAN_BASE_URL_UNRESOLVED");
+  });
+
+  it("takes base_url from an absolute Postman URL", () => {
+    const raw = JSON.parse(
+      readFileSync(join(fixtures, "postman-minimal.json"), "utf8"),
+    ) as unknown;
+    const r = parseLegacyToCanonical(raw, { serviceName: "t" });
+    expect(r.canonical.variables?.base_url).toBe("https://example.com");
+  });
+
+  it("reports an unresolved Postman base URL", () => {
+    const r = parseLegacyToCanonical(
+      {
+        info: { schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+        item: [{ name: "x", request: { method: "GET", url: "{{host}}/x" } }],
+      },
+      { serviceName: "t" },
+    );
+    expect(r.canonical.variables?.base_url).toBe("");
+    expect(r.losses.map((l) => l.code)).toContain("POSTMAN_BASE_URL_UNRESOLVED");
+  });
   it("reports smart losses for Postman collection scripts", () => {
     const raw = JSON.parse(
       readFileSync(join(fixtures, "postman-with-scripts.json"), "utf8"),

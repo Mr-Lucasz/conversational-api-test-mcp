@@ -30,8 +30,57 @@ type PostmanUrl = {
   raw?: string;
   host?: string[];
   path?: string[];
-  query?: { key: string; value: string }[];
+  query?: { key: string; value?: string; disabled?: boolean }[];
 };
+
+type PostmanVariable = { key?: string; value?: unknown; disabled?: boolean };
+
+const HOST_PLACEHOLDER = /^\{\{\s*([^}\s]+)\s*\}\}/;
+
+/** Query string from the structured `query` list, or from `raw` when the list is absent. */
+function urlQuery(url: PostmanUrl): string {
+  if (url.query) {
+    const pairs = url.query
+      .filter((q) => q.key && !q.disabled)
+      .map((q) => (q.value === undefined || q.value === null ? q.key : `${q.key}=${q.value}`));
+    return pairs.length ? `?${pairs.join("&")}` : "";
+  }
+  const at = url.raw?.indexOf("?") ?? -1;
+  return at >= 0 ? url.raw!.slice(at) : "";
+}
+
+/**
+ * Base URL of the collection: the origin of the first absolute request URL, or the value of the
+ * collection variable used as host (`{{baseUrl}}/posts`). Empty when neither is available.
+ */
+function resolveBaseUrl(requests: PostmanRequest[], variables: PostmanVariable[] | undefined): string {
+  const values = new Map<string, string>();
+  for (const v of variables ?? []) {
+    if (v.key && !v.disabled && typeof v.value === "string" && v.value.trim()) {
+      values.set(v.key, v.value.trim());
+    }
+  }
+  for (const req of requests) {
+    const raw = typeof req.url === "string" ? req.url : req.url?.raw;
+    if (!raw) {
+      continue;
+    }
+    const placeholder = HOST_PLACEHOLDER.exec(raw);
+    if (placeholder) {
+      const value = values.get(placeholder[1]);
+      if (value) {
+        return value.replace(/\/+$/, "");
+      }
+      continue;
+    }
+    try {
+      return new URL(raw).origin;
+    } catch {
+      // relative URL: try the next request
+    }
+  }
+  return "";
+}
 
 function urlToPath(url: PostmanUrl | string | undefined): string {
   if (!url) {
@@ -42,7 +91,8 @@ function urlToPath(url: PostmanUrl | string | undefined): string {
       const u = new URL(url);
       return u.pathname + u.search;
     } catch {
-      return url.startsWith("/") ? url : `/${url}`;
+      const rest = url.replace(HOST_PLACEHOLDER, "");
+      return rest.startsWith("/") ? rest : `/${rest}`;
     }
   }
   if (url.raw) {
@@ -51,11 +101,11 @@ function urlToPath(url: PostmanUrl | string | undefined): string {
       return u.pathname + u.search;
     } catch {
       const path = (url.path ?? []).join("/");
-      return path ? `/${path}` : "/";
+      return (path ? `/${path}` : "/") + urlQuery(url);
     }
   }
   const path = (url.path ?? []).join("/");
-  return path ? `/${path}` : "/";
+  return (path ? `/${path}` : "/") + urlQuery(url);
 }
 
 function collectItems(
@@ -157,6 +207,7 @@ export class PostmanParser implements LegacyParserStrategy {
       item?: PostmanItem[];
       info?: { name?: string };
       event?: PostmanEvent[];
+      variable?: PostmanVariable[];
     };
     const scripts = collectPostmanScriptsFromCollection(o);
     losses.push(
@@ -206,11 +257,23 @@ export class PostmanParser implements LegacyParserStrategy {
       });
     }
 
+    const baseUrl = resolveBaseUrl(
+      flat.map((x) => x.req),
+      o.variable,
+    );
+    if (!baseUrl && flat.length) {
+      losses.push({
+        code: "POSTMAN_BASE_URL_UNRESOLVED",
+        message:
+          "No absolute URL or collection variable with the host was found; set base_url before running.",
+      });
+    }
+
     const canonical: ApiDefinitionYaml = {
       version: "1",
       service: options?.serviceName ?? o.info?.name ?? "imported-postman",
       base_url: "{{base_url}}",
-      variables: { base_url: "" },
+      variables: { base_url: baseUrl },
       endpoints,
     };
 
