@@ -1,0 +1,36 @@
+{
+  "info": {
+    "_postman_id": "6f1c2a9e-4b7d-4e2a-9c31-0d5e8b7a1f42",
+    "name": "Blog API",
+    "description": "Colecao de demonstracao contra o JSONPlaceholder, usada no video.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://jsonplaceholder.typicode.com" }
+  ],
+  "item": [
+    {
+      "name": "Posts",
+      "item": [
+        { "name": "List posts", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": { "raw": "{{baseUrl}}/posts", "host": ["{{baseUrl}}"], "path": ["posts"] } } },
+        { "name": "Get post", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": { "raw": "{{baseUrl}}/posts/1", "host": ["{{baseUrl}}"], "path": ["posts", "1"] } } },
+        { "name": "Create post", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"title\": \"Testando API conversando\",\n  \"body\": \"Collection do Postman rodando dentro do agente.\",\n  \"userId\": 1\n}", "options": { "raw": { "language": "json" } } }, "url": { "raw": "{{baseUrl}}/posts", "host": ["{{baseUrl}}"], "path": ["posts"] } } },
+        { "name": "Update post", "request": { "method": "PUT", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"id\": 1,\n  \"title\": \"Titulo revisado\",\n  \"body\": \"Conteudo revisado.\",\n  \"userId\": 1\n}", "options": { "raw": { "language": "json" } } }, "url": { "raw": "{{baseUrl}}/posts/1", "host": ["{{baseUrl}}"], "path": ["posts", "1"] } } },
+        { "name": "Patch post title", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"title\": \"So o titulo mudou\"\n}", "options": { "raw": { "language": "json" } } }, "url": { "raw": "{{baseUrl}}/posts/1", "host": ["{{baseUrl}}"], "path": ["posts", "1"] } } },
+        { "name": "Delete post", "request": { "method": "DELETE", "header": [], "url": { "raw": "{{baseUrl}}/posts/1", "host": ["{{baseUrl}}"], "path": ["posts", "1"] } } }
+      ]
+    },
+    {
+      "name": "Comments",
+      "item": [
+        { "name": "Comments of post", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": { "raw": "{{baseUrl}}/comments?postId=1", "host": ["{{baseUrl}}"], "path": ["comments"], "query": [{ "key": "postId", "value": "1" }] } } }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        { "name": "Get user", "request": { "method": "GET", "header": [{ "key": "Accept", "value": "application/json" }], "url": { "raw": "{{baseUrl}}/users/1", "host": ["{{baseUrl}}"], "path": ["users", "1"] } } }
+      ]
+    }
+  ]
+}
