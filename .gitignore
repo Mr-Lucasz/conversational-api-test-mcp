@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env.mcp.local
+video/out/
 
 # Rascunhos locais.
 scripts/

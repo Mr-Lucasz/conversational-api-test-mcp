@@ -1,0 +1,25 @@
+{
+  "name": "conversational-api-test-mcp-video",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Video de divulgacao (LinkedIn, 4:5) do Conversational API Test MCP, feito com Remotion",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Promo out/vander-linkedin.mp4",
+    "cover": "remotion still src/index.ts Cover out/vander-linkedin-capa.png",
+    "render:postman": "remotion render src/index.ts PostmanRun out/postman-run.mp4",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.534",
+    "@remotion/google-fonts": "4.0.534",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.534"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.0.0"
+  }
+}
