@@ -66,6 +66,10 @@ import {
 } from "../tools/initWorkspace.js";
 import { importCurlHandler, importCurlInputSchema } from "../tools/importCurl.js";
 import { runEvalHandler, runEvalInputSchema } from "../tools/runEval.js";
+import {
+  importPostmanEnvironmentHandler,
+  importPostmanEnvironmentInputSchema,
+} from "../tools/importPostmanEnvironment.js";
 import type { z } from "zod";
 
 /**
@@ -186,6 +190,15 @@ export function getAllToolDefinitions(): ToolDefinition[] {
         "Turn a `curl` command the user pasted into a request in a YAML definition under `.mcp/api/` (creates the file, or appends to it). Method, URL, query string, headers and JSON / form body are carried over. Credentials (Authorization, cookies, `-u`, credential-looking fields) are moved to `.env.mcp.local` and replaced by `{{VARIABLE}}`, so the YAML stays safe to commit. Fails if `requestId` already exists.",
       inputSchema: importCurlInputSchema,
       handler: importCurlHandler,
+    },
+    {
+      name: "import_postman_environment",
+      title: "Import Postman environment",
+      annotations: WRITES_FILES,
+      description:
+        "Copy the variables of a Postman environment (or globals) export into `.env.mcp.local`, never replacing a key already there. With `environment` (e.g. STAGING) keys get that prefix and win once set_environment STAGING is active. Disabled and empty values are skipped; values are never returned.",
+      inputSchema: importPostmanEnvironmentInputSchema,
+      handler: importPostmanEnvironmentHandler,
     },
     {
       name: "execute_api_request",
