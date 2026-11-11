@@ -269,12 +269,13 @@ Every request in the collection, folders included, is now an endpoint. The `loss
 | What you had in Postman | What the import does | How to finish |
 |-------------------------|----------------------|---------------|
 | The host in each URL | Becomes `base_url`, taken from the collection variable used as host (`{{baseUrl}}/orders`) or from the first absolute URL. With neither, `base_url` stays empty and `losses` reports `POSTMAN_BASE_URL_UNRESOLVED`. | Nothing, when it was found. Otherwise "set `base_url` to `https://api.example.com`", or put `BASE_URL=...` in `.env.mcp.local` and use `{{BASE_URL}}`. |
-| The **Authorization** tab (collection, folder or request) | Not converted, and not reported in `losses`. | Add `auth: Bearer {{TOKEN}}` to the requests, plus `auth_dependency` if a login request produces the token. |
+| The **Authorization** tab (collection, folder or request) | Converted per request, following Postman's inheritance (`inherit`, `noauth`): Bearer and Basic become `auth`, Digest becomes `digest_auth`, API Key becomes a header or a param. Literal credentials go to `.env.mcp.local`. Other types (OAuth 2.0, AWS, …), and Basic built from `{{variables}}`, are reported as `POSTMAN_AUTH_UNSUPPORTED`. | Nothing for the converted ones. For the rest, `auth: Bearer {{TOKEN}}`, plus `capture` + `auth_dependency` when a login request produces the token. |
 | Pre-request scripts | Not executed. Reported in `losses`, with a hint when the script generated ids or fetched a token. | `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}` for generated values; `capture` + `auth_dependency` for tokens. |
 | Tests (`pm.test`) | Not converted. Reported in `losses`. | `assert` on the request or on a flow step — see [value checks](#value-checks). |
 | Request names | Become ids such as `postman_0_List_orders`. | "Rename it to `list_orders`." |
 | Query string | Stays inline in `path`; disabled params are dropped. | Works as it is; move it to `params` if you want to vary it. |
-| `form-data` and other non-raw bodies | Not mapped. Reported in `losses`. | Rewrite as `form` (URL-encoded) or `body`. |
+| Bodies | `raw` becomes `body`, `x-www-form-urlencoded` becomes `form`, GraphQL becomes a `{ query, variables }` body. `form-data` and binary files are not mapped and are reported as `POSTMAN_BODY_MODE`, naming the requests. | Rewrite those as `form` or `body`. |
+| Disabled headers and params | Left out, as Postman leaves them out of the request. | — |
 | Postman environments | Not imported. | One block of keys per environment in `.env.mcp.local`: `BASE_URL`, `STAGING_BASE_URL`, … |
 
 The collection file is only read. Keep it, delete it, or leave it out of git — the YAML is the source of truth from now on.

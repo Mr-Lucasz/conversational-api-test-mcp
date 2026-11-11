@@ -269,12 +269,13 @@ Cada request da collection, inclusive os de pastas, agora é um endpoint. A list
 | O que você tinha no Postman | O que a importação faz | Como terminar |
 |-----------------------------|------------------------|---------------|
 | O host em cada URL | Vira o `base_url`, tirado da variável da collection usada como host (`{{baseUrl}}/orders`) ou da primeira URL absoluta. Sem nenhuma das duas, o `base_url` fica vazio e `losses` traz `POSTMAN_BASE_URL_UNRESOLVED`. | Nada, quando foi encontrado. Senão, "define o `base_url` como `https://api.exemplo.com`", ou coloque `BASE_URL=...` no `.env.mcp.local` e use `{{BASE_URL}}`. |
-| A aba **Authorization** (collection, pasta ou request) | Não é convertida, e não aparece em `losses`. | Adicione `auth: Bearer {{TOKEN}}` aos requests, mais `auth_dependency` se um request de login gera o token. |
+| A aba **Authorization** (collection, pasta ou request) | Convertida por request, seguindo a herança do Postman (`inherit`, `noauth`): Bearer e Basic viram `auth`, Digest vira `digest_auth`, API Key vira header ou param. Credenciais literais vão para o `.env.mcp.local`. Outros tipos (OAuth 2.0, AWS, …), e Basic montado com `{{variáveis}}`, aparecem como `POSTMAN_AUTH_UNSUPPORTED`. | Nada, para os convertidos. Para o resto, `auth: Bearer {{TOKEN}}`, mais `capture` + `auth_dependency` quando um request de login gera o token. |
 | Scripts de pre-request | Não são executados. Aparecem em `losses`, com uma dica quando o script gerava ids ou buscava token. | `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}` para valores gerados; `capture` + `auth_dependency` para tokens. |
 | Testes (`pm.test`) | Não são convertidos. Aparecem em `losses`. | `assert` no request ou em um passo de fluxo — veja [verificações de valor](#verificações-de-valor). |
 | Nomes dos requests | Viram ids como `postman_0_List_orders`. | "Renomeia para `list_orders`." |
 | Query string | Fica embutida no `path`; parâmetros desativados são descartados. | Funciona assim; mova para `params` se quiser variar. |
-| `form-data` e outros corpos que não são raw | Não são mapeados. Aparecem em `losses`. | Reescreva como `form` (URL-encoded) ou `body`. |
+| Corpos | `raw` vira `body`, `x-www-form-urlencoded` vira `form`, GraphQL vira um `body` `{ query, variables }`. `form-data` e arquivos binários não são mapeados e aparecem como `POSTMAN_BODY_MODE`, com o nome dos requests. | Reescreva esses como `form` ou `body`. |
+| Headers e params desativados | Ficam de fora, como o Postman faz no request. | — |
 | Environments do Postman | Não são importados. | Um bloco de chaves por ambiente no `.env.mcp.local`: `BASE_URL`, `STAGING_BASE_URL`, … |
 
 O arquivo da collection só é lido. Guarde, apague ou deixe fora do git — o YAML passa a ser a fonte da verdade.

@@ -1,0 +1,127 @@
+{
+  "info": {
+    "name": "Auth and bodies",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [{ "key": "baseUrl", "value": "https://api.example.com" }],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "collection-token", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Inherits",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" },
+          { "key": "X-Debug", "value": "1", "disabled": true }
+        ],
+        "url": "{{baseUrl}}/me"
+      }
+    },
+    {
+      "name": "Admin",
+      "auth": {
+        "type": "basic",
+        "basic": [
+          { "key": "username", "value": "admin" },
+          { "key": "password", "value": "s3cret" }
+        ]
+      },
+      "item": [
+        { "name": "Folder auth", "request": { "method": "GET", "url": "{{baseUrl}}/admin" } },
+        {
+          "name": "Public",
+          "request": { "method": "GET", "auth": { "type": "noauth" }, "url": "{{baseUrl}}/public" }
+        }
+      ]
+    },
+    {
+      "name": "Typed header wins",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{other}}" }],
+        "url": "{{baseUrl}}/typed"
+      }
+    },
+    {
+      "name": "Api key in query",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "apikey",
+          "apikey": [
+            { "key": "key", "value": "api_key" },
+            { "key": "value", "value": "k-123" },
+            { "key": "in", "value": "query" }
+          ]
+        },
+        "url": "{{baseUrl}}/search"
+      }
+    },
+    {
+      "name": "Api key in header",
+      "request": {
+        "method": "GET",
+        "auth": { "type": "apikey", "apikey": { "key": "X-Api-Key", "value": "{{apiKey}}" } },
+        "url": "{{baseUrl}}/stats"
+      }
+    },
+    {
+      "name": "Digest",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "digest",
+          "digest": [
+            { "key": "username", "value": "dig" },
+            { "key": "password", "value": "dig-pass" }
+          ]
+        },
+        "url": "{{baseUrl}}/digest"
+      }
+    },
+    {
+      "name": "OAuth2",
+      "request": {
+        "method": "GET",
+        "auth": { "type": "oauth2", "oauth2": [{ "key": "accessToken", "value": "x" }] },
+        "url": "{{baseUrl}}/oauth"
+      }
+    },
+    {
+      "name": "Login form",
+      "request": {
+        "method": "POST",
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "password" },
+            { "key": "scope", "value": "all", "disabled": true }
+          ]
+        },
+        "url": "{{baseUrl}}/token"
+      }
+    },
+    {
+      "name": "GraphQL",
+      "request": {
+        "method": "POST",
+        "body": {
+          "mode": "graphql",
+          "graphql": { "query": "query { me { id } }", "variables": "{\"limit\": 5}" }
+        },
+        "url": "{{baseUrl}}/graphql"
+      }
+    },
+    {
+      "name": "Upload",
+      "request": {
+        "method": "POST",
+        "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "a.png" }] },
+        "url": "{{baseUrl}}/upload"
+      }
+    }
+  ]
+}

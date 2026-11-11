@@ -5,6 +5,7 @@ import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 import { parseLegacyToCanonical } from "../src/conversion/ParserFactory.js";
 import { parseApiDefinitionYaml } from "../src/canonical/io.js";
+import { basicHeader, fixtureAuth, postmanAuthFixtureText } from "./postmanAuthFixture.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, "fixtures");
@@ -50,6 +51,63 @@ describe("legacy parsers", () => {
     expect(r.canonical.variables?.base_url).toBe("");
     expect(r.losses.map((l) => l.code)).toContain("POSTMAN_BASE_URL_UNRESOLVED");
   });
+  describe("Postman authorization and bodies", () => {
+    const r = parseLegacyToCanonical(JSON.parse(postmanAuthFixtureText) as unknown, {
+      serviceName: "t",
+    });
+    const ep = (description: string) => {
+      const found = r.canonical.endpoints.find((e) => e.description === description);
+      if (!found) throw new Error(`no endpoint ${description}`);
+      return found;
+    };
+
+    it("inherits the collection auth and drops disabled headers", () => {
+      expect(ep("Inherits").auth).toBe(`Bearer ${fixtureAuth().token}`);
+      expect(ep("Inherits").headers).toEqual({ Accept: "application/json" });
+    });
+
+    it("uses the folder auth, and noauth turns it off", () => {
+      expect(ep("Admin/Folder auth").auth).toBe(basicHeader("Admin"));
+      expect(ep("Admin/Public").auth).toBeUndefined();
+    });
+
+    it("keeps an Authorization header typed on the request", () => {
+      expect(ep("Typed header wins").auth).toBeUndefined();
+      expect(ep("Typed header wins").headers).toEqual({ Authorization: "Bearer {{other}}" });
+    });
+
+    it("maps API keys to params or headers, in v2.1 and v2.0 form", () => {
+      const { key, value } = fixtureAuth("Api key in query");
+      expect(ep("Api key in query").params).toEqual({ [key]: value });
+      expect(ep("Api key in query").auth).toBeUndefined();
+      expect(ep("Api key in header").headers).toEqual({ "X-Api-Key": "{{apiKey}}" });
+    });
+
+    it("maps digest auth", () => {
+      expect(ep("Digest").digest_auth).toEqual(fixtureAuth("Digest"));
+      expect(ep("Digest").auth).toBeUndefined();
+    });
+
+    it("maps urlencoded to form and graphql to a JSON body", () => {
+      expect(ep("Login form").form).toEqual({ grant_type: "password" });
+      expect(ep("Login form").body).toBeUndefined();
+      expect(ep("GraphQL").body).toEqual({ query: "query { me { id } }", variables: { limit: 5 } });
+    });
+
+    it("reports unsupported auth and body modes with the requests they affect", () => {
+      const byCode = Object.fromEntries(r.losses.map((l) => [l.code, l.message]));
+      expect(byCode.POSTMAN_AUTH_UNSUPPORTED).toContain('"oauth2"');
+      expect(byCode.POSTMAN_AUTH_UNSUPPORTED).toContain("OAuth2");
+      expect(byCode.POSTMAN_BODY_MODE).toContain('"formdata"');
+      expect(byCode.POSTMAN_BODY_MODE).toContain("Upload");
+      expect(ep("OAuth2").auth).toBeUndefined();
+    });
+
+    it("produces a definition the canonical schema accepts", () => {
+      expect(() => parseApiDefinitionYaml(JSON.stringify(r.canonical))).not.toThrow();
+    });
+  });
+
   it("reports smart losses for Postman collection scripts", () => {
     const raw = JSON.parse(
       readFileSync(join(fixtures, "postman-with-scripts.json"), "utf8"),

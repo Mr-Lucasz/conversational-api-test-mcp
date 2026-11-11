@@ -53,7 +53,10 @@ function variableName(id: string, name: string): string {
   return `${id}_${name}`.toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
 
-/** Replace literal credentials in headers / auth by `{{VARIABLE}}`; returns what was lifted. */
+/**
+ * Replace literal credentials in auth, Digest passwords and sensitive headers / params by
+ * `{{VARIABLE}}`; returns what was lifted.
+ */
 export function liftLiteralSecrets(def: ApiDefinitionYaml): Record<string, string> {
   const secrets: Record<string, string> = {};
   const lift = (id: string, name: string, value: string): string => {
@@ -68,10 +71,15 @@ export function liftLiteralSecrets(def: ApiDefinitionYaml): Record<string, strin
         ? `${scheme[1]} ${lift(ep.id, "TOKEN", scheme[2] as string)}`
         : lift(ep.id, "AUTHORIZATION", ep.auth);
     }
-    for (const [name, value] of Object.entries(ep.headers ?? {})) {
-      if (isSensitiveName(name) && value && !value.includes("{{")) {
-        (ep.headers as Record<string, string>)[name] = lift(ep.id, name, value);
+    for (const fields of [ep.headers, ep.params]) {
+      for (const [name, value] of Object.entries(fields ?? {})) {
+        if (isSensitiveName(name) && value && !value.includes("{{")) {
+          (fields as Record<string, string>)[name] = lift(ep.id, name, value);
+        }
       }
+    }
+    if (ep.digest_auth && !ep.digest_auth.password.includes("{{")) {
+      ep.digest_auth.password = lift(ep.id, "PASSWORD", ep.digest_auth.password);
     }
   }
   return secrets;
