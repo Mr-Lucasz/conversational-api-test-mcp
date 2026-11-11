@@ -129,16 +129,24 @@ export function formatDatePattern(pattern: string, d: Date): string {
 }
 
 /**
- * Native macros: `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}`, `{{$date:FORMAT}}`.
- * `$timestamp` is Unix time in milliseconds as a decimal string (same as `Date.now()`).
+ * Native macros: `{{$uuid}}`, `{{$timestamp}}`, `{{$timestampSeconds}}`, `{{$isoTimestamp}}`,
+ * `{{$date}}`, `{{$date:FORMAT}}`. `$timestamp` is Unix time in milliseconds as a decimal
+ * string (same as `Date.now()`); `$timestampSeconds` is Postman's `{{$timestamp}}`.
+ * `$guid` and `$randomUUID` (Postman names) are aliases of `$uuid`.
  */
 function expandMacro(rawKey: string): string {
   const key = rawKey.trim();
-  if (key === "$uuid") {
+  if (key === "$uuid" || key === "$guid" || key === "$randomUUID") {
     return randomUUID();
   }
   if (key === "$timestamp") {
     return String(Date.now());
+  }
+  if (key === "$timestampSeconds") {
+    return String(Math.floor(Date.now() / 1000));
+  }
+  if (key === "$isoTimestamp") {
+    return new Date().toISOString();
   }
   if (key === "$date") {
     return formatDatePattern("YYYY-MM-DD", new Date());
