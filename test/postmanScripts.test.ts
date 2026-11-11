@@ -42,6 +42,7 @@ pm.collectionVariables.set('firstItem', pm.response.json().items[0].sku);
       },
       capture: { orderId: "$.order.id", firstItem: "$.items[0].sku" },
       unconverted: 0,
+      leftover: [],
     });
   });
 

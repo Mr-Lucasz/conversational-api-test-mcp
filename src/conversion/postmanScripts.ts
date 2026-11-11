@@ -21,8 +21,10 @@ export type ScriptTranslation = {
   capture?: Record<string, string>;
   /** Variables a pre-request script generates, as canonical macros. */
   variables?: Record<string, string>;
-  /** Script statements that were not translated. */
+  /** How many script statements were not translated. */
   unconverted: number;
+  /** Those statements, for hints about what is left to port. */
+  leftover: string[];
 };
 
 /** A whole `pm.environment.set("name", value);` statement; the value runs to the last `)`. */
@@ -118,7 +120,7 @@ export function translateTestScripts(scripts: string[]): ScriptTranslation {
   const assert: AssertSpec = {};
   const checks: ValueCheck[] = [];
   const capture: Record<string, string> = {};
-  let unconverted = 0;
+  const leftover: string[] = [];
 
   for (const script of scripts) {
     const aliases = bodyAliases(script);
@@ -134,7 +136,7 @@ export function translateTestScripts(scripts: string[]): ScriptTranslation {
       if (translateTestStatement(body, aliases, assert, checks, capture)) {
         continue;
       }
-      unconverted += 1;
+      leftover.push(line);
     }
   }
 
@@ -144,7 +146,8 @@ export function translateTestScripts(scripts: string[]): ScriptTranslation {
   return {
     ...(Object.keys(assert).length ? { assert } : {}),
     ...(Object.keys(capture).length ? { capture } : {}),
-    unconverted,
+    unconverted: leftover.length,
+    leftover,
   };
 }
 
@@ -266,7 +269,7 @@ function pushExists(path: string, assert: AssertSpec, checks: ValueCheck[]): voi
 /** Translates pre-request scripts: generated values become definition variables. */
 export function translatePreRequestScripts(scripts: string[]): ScriptTranslation {
   const variables: Record<string, string> = {};
-  let unconverted = 0;
+  const leftover: string[] = [];
   for (const script of scripts) {
     for (const line of meaningfulStatements(script)) {
       const m = SET_VAR.exec(line);
@@ -274,13 +277,14 @@ export function translatePreRequestScripts(scripts: string[]): ScriptTranslation
       if (t?.variable) {
         variables[t.variable[0]] = t.variable[1];
       } else {
-        unconverted += 1;
+        leftover.push(line);
       }
     }
   }
   return {
     ...(Object.keys(variables).length ? { variables } : {}),
-    unconverted,
+    unconverted: leftover.length,
+    leftover,
   };
 }
 
