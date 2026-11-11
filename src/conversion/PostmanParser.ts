@@ -285,65 +285,6 @@ function mapBody(
   }
 }
 
-function walkPostmanItems(
-  items: PostmanItem[] | undefined,
-  visit: (item: PostmanItem) => void,
-): void {
-  if (!items) {
-    return;
-  }
-  for (const it of items) {
-    visit(it);
-    walkPostmanItems(it.item, visit);
-  }
-}
-
-function pushEventScripts(
-  events: PostmanEvent[] | undefined,
-  prerequest: string[],
-  test: string[],
-): void {
-  if (!events?.length) {
-    return;
-  }
-  for (const ev of events) {
-    const exec = ev.script?.exec;
-    const text = Array.isArray(exec) ? exec.join("\n").trim() : "";
-    if (!text) {
-      continue;
-    }
-    if (ev.listen === "prerequest") {
-      prerequest.push(text);
-    } else if (ev.listen === "test") {
-      test.push(text);
-    }
-  }
-}
-
-function collectPostmanScriptsFromCollection(raw: {
-  item?: PostmanItem[];
-  event?: PostmanEvent[];
-}): {
-  prerequest: string[];
-  test: string[];
-  signals: PostmanScriptSignals;
-} {
-  const prerequest: string[] = [];
-  const test: string[] = [];
-  pushEventScripts(raw.event, prerequest, test);
-  walkPostmanItems(raw.item, (item) => {
-    pushEventScripts(item.event, prerequest, test);
-  });
-  let signals: PostmanScriptSignals = {
-    hasUuidLike: false,
-    hasOAuthLike: false,
-  };
-  for (const s of [...prerequest, ...test]) {
-    signals = mergePostmanScriptSignals(signals, detectPostmanScriptSignals(s));
-  }
-  return { prerequest, test, signals };
-}
-
 export class PostmanParser implements LegacyParserStrategy {
   readonly id = "postman";
 
@@ -368,7 +309,13 @@ export class PostmanParser implements LegacyParserStrategy {
       variable?: PostmanVariable[];
       auth?: PostmanAuth;
     };
-    const scripts = collectPostmanScriptsFromCollection(o);
+    // Hints in the script losses come only from the scripts that were not translated.
+    let leftoverSignals: PostmanScriptSignals = { hasUuidLike: false, hasOAuthLike: false };
+    const noteLeftover = (texts: string[]) => {
+      for (const t of texts) {
+        leftoverSignals = mergePostmanScriptSignals(leftoverSignals, detectPostmanScriptSignals(t));
+      }
+    };
     const untranslatedPre: string[] = [];
     const untranslatedTests: string[] = [];
     const generatedVariables: Record<string, string> = {};
@@ -426,15 +373,21 @@ export class PostmanParser implements LegacyParserStrategy {
       const tests = translateTestScripts(scriptsOf(events, "test"));
       if (tests.assert) endpoint.assert = tests.assert;
       if (tests.capture) endpoint.capture = tests.capture;
-      if (tests.unconverted) untranslatedTests.push(name);
+      if (tests.unconverted) {
+        untranslatedTests.push(name);
+        noteLeftover(tests.leftover);
+      }
       const pre = translatePreRequestScripts(scriptsOf(events, "prerequest"));
       for (const [k, v] of Object.entries(pre.variables ?? {})) generatedVariables[k] ??= v;
-      if (pre.unconverted) untranslatedPre.push(name);
+      if (pre.unconverted) {
+        untranslatedPre.push(name);
+        noteLeftover(pre.leftover);
+      }
       endpoints.push(rewriteDynamicVariables(endpoint));
     }
 
     losses.push(
-      ...buildPostmanScriptLosses(scripts.signals, {
+      ...buildPostmanScriptLosses(leftoverSignals, {
         prerequest: untranslatedPre.length,
         test: untranslatedTests.length,
       }).map((l) => ({

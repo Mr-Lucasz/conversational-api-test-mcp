@@ -120,7 +120,8 @@ describe("legacy parsers", () => {
     expect(r.canonical.endpoints[0].assert).toEqual({ status: 200 });
     expect(r.canonical.variables?.rid).toBe("{{$uuid}}");
     const pre = r.losses.find((l) => l.code === "POSTMAN_PRE_REQUEST_SCRIPTS");
-    expect(pre?.message).toMatch(/\{\{\$uuid\}\}/);
+    // The uuid line was translated, so only the token hint is left.
+    expect(pre?.message).not.toMatch(/\{\{\$uuid\}\}/);
     expect(pre?.message).toMatch(/auth_dependency/i);
   });
 

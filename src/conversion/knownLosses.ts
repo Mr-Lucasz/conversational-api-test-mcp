@@ -4,8 +4,9 @@ import type { ParseLoss } from "./LegacyParserStrategy.js";
  * Known conversion gaps (benchmark / shift-left matrix), for reports and docs in code.
  */
 export const KNOWN_LOSS_CODES = {
-  POSTMAN_PRE_REQUEST_SCRIPTS: "Events / pre-request scripts are not executed.",
-  POSTMAN_TESTS: "Post-run test scripts are not converted.",
+  POSTMAN_PRE_REQUEST_SCRIPTS:
+    "Some pre-request script lines could not be translated and will not run.",
+  POSTMAN_TESTS: "Some test script lines could not be translated to assert / capture.",
   OAS_REF: "$ref expansion and rich requestBody schemas are limited in v1 import.",
   OAS_SECURITY_SCHEMES: "Global security schemes are not auto-wired to each request.",
   INSOMNIA_GRPC: "Non-HTTP Insomnia resources are skipped.",
