@@ -36,8 +36,10 @@ export function createConversationalApiMcpServer(): McpServer {
     server.registerTool(
       tool.name,
       {
+        title: tool.title,
         description: tool.description,
         inputSchema: tool.inputSchema,
+        annotations: { title: tool.title, ...tool.annotations },
       },
       async (args: unknown) => {
         const result = await tool.handler(args ?? {});
