@@ -133,6 +133,9 @@ function summarizeCaptureIds(
   return [...out];
 }
 
+export type ApiFlowInput = z.infer<typeof executeApiFlowInputSchema>;
+export type ApiFlowResult = Awaited<ReturnType<typeof runApiFlow>>;
+
 export async function executeApiFlowHandler(
   args: unknown,
 ): Promise<{
@@ -143,197 +146,199 @@ export async function executeApiFlowHandler(
   if (!parsed.success) {
     return textResult({ error: parsed.error.flatten() }, true);
   }
+  return safeTool(() => runApiFlow(parsed.data));
+}
 
-  return safeTool(async () => {
-    const {
-      workspaceRoot: workspaceRootArg,
-      definitionRelativePath,
-      steps: inlineSteps,
-      flowName,
-      responseDetail,
-      stopOnError,
-    } = parsed.data;
+/** Runs the steps and returns the flow result; throws on a bad definition or flow name. */
+export async function runApiFlow(input: ApiFlowInput) {
+  const {
+    workspaceRoot: workspaceRootArg,
+    definitionRelativePath,
+    steps: inlineSteps,
+    flowName,
+    responseDetail,
+    stopOnError,
+  } = input;
 
-    const workspaceRoot = resolveWorkspaceRoot(workspaceRootArg);
-    const filePath = safeResolveUnderWorkspace(
-      workspaceRoot,
-      definitionRelativePath,
-    );
+  const workspaceRoot = resolveWorkspaceRoot(workspaceRootArg);
+  const filePath = safeResolveUnderWorkspace(
+    workspaceRoot,
+    definitionRelativePath,
+  );
 
-    const def: ApiDefinitionYaml = readApiDefinitionFile(filePath);
-    const envLocal = loadEnvMcpLocalParsed(workspaceRoot);
-    const steps = resolveSteps(def, inlineSteps, flowName);
+  const def: ApiDefinitionYaml = readApiDefinitionFile(filePath);
+  const envLocal = loadEnvMcpLocalParsed(workspaceRoot);
+  const steps = resolveSteps(def, inlineSteps, flowName);
 
-    const stepResults: Array<{
-      requestId: string;
-      ok: boolean;
-      status?: number;
-      durationMs?: number;
-      captureApplied: Record<string, string>;
-      captureErrors: string[];
-      errorPreview?: string;
-      body?: unknown;
-    }> = [];
+  const stepResults: Array<{
+    requestId: string;
+    ok: boolean;
+    status?: number;
+    durationMs?: number;
+    captureApplied: Record<string, string>;
+    captureErrors: string[];
+    errorPreview?: string;
+    body?: unknown;
+  }> = [];
 
-    let okOverall = true;
+  let okOverall = true;
 
-    for (const step of steps) {
-      const { requestId, optional, retry, poll, acceptStatus, assert } = step;
+  for (const step of steps) {
+    const { requestId, optional, retry, poll, acceptStatus, assert } = step;
 
-      const wantsBody =
-        step.jsonPathSelect !== undefined || responseDetail === "per_step";
-      const outputOptions: ExecuteOutputOptions =
-        responseDetail === "minimal" && !wantsBody
-          ? { responseDetail: "minimal" }
-          : {
-              responseDetail: "summary",
-              maxBodyChars: STEP_BODY_CHARS,
-              jsonPathSelect: step.jsonPathSelect,
-            };
+    const wantsBody =
+      step.jsonPathSelect !== undefined || responseDetail === "per_step";
+    const outputOptions: ExecuteOutputOptions =
+      responseDetail === "minimal" && !wantsBody
+        ? { responseDetail: "minimal" }
+        : {
+            responseDetail: "summary",
+            maxBodyChars: STEP_BODY_CHARS,
+            jsonPathSelect: step.jsonPathSelect,
+          };
 
-      const retryMax = retry?.max ?? 1;
-      const retryDelayMs = retry?.delayMs ?? 0;
+    const retryMax = retry?.max ?? 1;
+    const retryDelayMs = retry?.delayMs ?? 0;
 
-      let last: ExecuteResult | null = null;
-      let lastOk = false;
+    let last: ExecuteResult | null = null;
+    let lastOk = false;
 
-      for (let attempt = 1; attempt <= retryMax; attempt++) {
-        // Uma execução “atômica” do requestId (com auth/captura já incluso pelo engine).
-        const execOnce = async (): Promise<ExecuteResult> =>
-          runEndpointWithDefinition({
+    for (let attempt = 1; attempt <= retryMax; attempt++) {
+      // Uma execução “atômica” do requestId (com auth/captura já incluso pelo engine).
+      const execOnce = async (): Promise<ExecuteResult> =>
+        runEndpointWithDefinition({
+          workspaceRoot,
+          def,
+          envLocal,
+          requestId,
+          timeoutMs: undefined,
+          chain: [],
+          allow401Retry: true,
+          outputOptions,
+        });
+
+      last = await execOnce();
+
+      // Se houver polling, reexecuta até o jsonPath existir.
+      let pollOk = true;
+      if (poll && last.ok) {
+        pollOk = false;
+        for (let i = 0; i < poll.maxAttempts; i++) {
+          pollOk = evalJsonPathOnLastResponse(
             workspaceRoot,
-            def,
-            envLocal,
-            requestId,
-            timeoutMs: undefined,
-            chain: [],
-            allow401Retry: true,
-            outputOptions,
-          });
-
-        last = await execOnce();
-
-        // Se houver polling, reexecuta até o jsonPath existir.
-        let pollOk = true;
-        if (poll && last.ok) {
-          pollOk = false;
-          for (let i = 0; i < poll.maxAttempts; i++) {
-            pollOk = evalJsonPathOnLastResponse(
-              workspaceRoot,
-              poll.untilJsonPath,
-            );
-            if (pollOk) break;
-            if (i < poll.maxAttempts - 1) {
-              const d = poll.delayMs ?? 0;
-              if (d > 0) await sleep(d);
-              last = await execOnce();
-              if (!last.ok) break;
-            }
+            poll.untilJsonPath,
+          );
+          if (pollOk) break;
+          if (i < poll.maxAttempts - 1) {
+            const d = poll.delayMs ?? 0;
+            if (d > 0) await sleep(d);
+            last = await execOnce();
+            if (!last.ok) break;
           }
-        } else if (poll && !last.ok) {
-          pollOk = false;
         }
-
-        lastOk =
-          last.ok &&
-          pollOk &&
-          isStatusAccepted(last.status, acceptStatus);
-
-        if (lastOk) break;
-
-        if (attempt < retryMax && retryDelayMs > 0) {
-          await sleep(retryDelayMs);
-        }
+      } else if (poll && !last.ok) {
+        pollOk = false;
       }
 
-      // Assert inline (status/jsonPathExists) sobre a última resposta do step — evita
-      // um round trip extra de assert_response após o flow.
-      let assertMessage: string | undefined;
-      if (lastOk && assert) {
-        const lastResp = getLastResponse(workspaceRoot);
-        const ar = lastResp
-          ? assertOnResponse(lastResp, assert, workspaceRoot)
-          : { ok: false as const, message: "no response captured for assert" };
-        if (!ar.ok) {
-          lastOk = false;
-          assertMessage = ar.message;
-        }
-      }
+      lastOk =
+        last.ok &&
+        pollOk &&
+        isStatusAccepted(last.status, acceptStatus);
 
-      // O corpo do step vem em `bodyJson` (JSON que coube no cap) ou `bodyPreview`.
-      const stepBody =
-        last && last.ok
-          ? last.bodyPreviewTruncated
-            ? last.bodyPreview
-            : (last.bodyJson ?? last.bodyPreview)
-          : undefined;
+      if (lastOk) break;
 
-      const summaryErrorPreview =
-        assertMessage ??
-        (last && last.ok
-          ? stepBody === undefined
-            ? // `minimal` não traz corpo; num step que falhou ele poupa a chamada de diagnóstico.
-              redactJsonText(
-                getLastResponse(workspaceRoot)?.bodyText ?? "",
-              ).slice(0, 400) || undefined
-            : (typeof stepBody === "string"
-                ? stepBody
-                : JSON.stringify(stepBody)
-              ).slice(0, 400)
-          : last && !last.ok
-            ? last.message
-            : undefined);
-
-      stepResults.push({
-        requestId,
-        ok: lastOk,
-        status: last && last.ok ? last.status : undefined,
-        durationMs: last && last.ok ? last.durationMs : undefined,
-        captureApplied: last && last.ok ? (last.captureApplied ?? {}) : {},
-        captureErrors: last && last.ok ? (last.captureErrors ?? []) : ["exec-failed"],
-        errorPreview: lastOk ? undefined : summaryErrorPreview,
-        // Num step que falhou o corpo já está em `errorPreview`.
-        body: lastOk && wantsBody ? stepBody : undefined,
-      });
-
-      if (!lastOk && !optional) {
-        okOverall = false;
-        if (stopOnError) break;
+      if (attempt < retryMax && retryDelayMs > 0) {
+        await sleep(retryDelayMs);
       }
     }
 
-    const captured = summarizeCaptureIds(
-      stepResults.map((s) => ({ captureApplied: s.captureApplied })),
-    );
+    // Assert inline (status/jsonPathExists) sobre a última resposta do step — evita
+    // um round trip extra de assert_response após o flow.
+    let assertMessage: string | undefined;
+    if (lastOk && assert) {
+      const lastResp = getLastResponse(workspaceRoot);
+      const ar = lastResp
+        ? assertOnResponse(lastResp, assert, workspaceRoot)
+        : { ok: false as const, message: "no response captured for assert" };
+      if (!ar.ok) {
+        lastOk = false;
+        assertMessage = ar.message;
+      }
+    }
 
-    const okSteps = stepResults.filter((s) => s.ok).length;
-    const failedSteps = stepResults.length - okSteps;
+    // O corpo do step vem em `bodyJson` (JSON que coube no cap) ou `bodyPreview`.
+    const stepBody =
+      last && last.ok
+        ? last.bodyPreviewTruncated
+          ? last.bodyPreview
+          : (last.bodyJson ?? last.bodyPreview)
+        : undefined;
 
-    // Omite captureApplied/captureErrors por step quando vazios — comum quando o
-    // endpoint não define `capture` — em vez de pagar `{}`/`[]` em cada step do flow.
-    // `minimal` também corta duração e valores capturados (os nomes seguem em `summary`).
-    const stepsOut = stepResults.map((s) => {
-      const { captureApplied, captureErrors, durationMs, ...rest } = s;
-      const lean = responseDetail === "minimal";
-      return omitNullish({
-        ...rest,
-        ...(lean ? {} : { durationMs }),
-        ...(!lean && Object.keys(captureApplied).length > 0
-          ? { captureApplied }
-          : {}),
-        ...(captureErrors.length > 0 ? { captureErrors } : {}),
-      });
+    const summaryErrorPreview =
+      assertMessage ??
+      (last && last.ok
+        ? stepBody === undefined
+          ? // `minimal` não traz corpo; num step que falhou ele poupa a chamada de diagnóstico.
+            redactJsonText(
+              getLastResponse(workspaceRoot)?.bodyText ?? "",
+            ).slice(0, 400) || undefined
+          : (typeof stepBody === "string"
+              ? stepBody
+              : JSON.stringify(stepBody)
+            ).slice(0, 400)
+        : last && !last.ok
+          ? last.message
+          : undefined);
+
+    stepResults.push({
+      requestId,
+      ok: lastOk,
+      // A step whose assert failed still got a response: keep its status.
+      status: last?.status,
+      durationMs: last && last.ok ? last.durationMs : undefined,
+      captureApplied: last && last.ok ? (last.captureApplied ?? {}) : {},
+      captureErrors: last && last.ok ? (last.captureErrors ?? []) : ["exec-failed"],
+      errorPreview: lastOk ? undefined : summaryErrorPreview,
+      // Num step que falhou o corpo já está em `errorPreview`.
+      body: lastOk && wantsBody ? stepBody : undefined,
     });
 
-    return {
-      ok: okOverall,
-      summary: {
-        okSteps,
-        failedSteps,
-        capturedVariables: captured,
-      },
-      steps: stepsOut,
-    };
-  });
-}
+    if (!lastOk && !optional) {
+      okOverall = false;
+      if (stopOnError) break;
+    }
+  }
 
+  const captured = summarizeCaptureIds(
+    stepResults.map((s) => ({ captureApplied: s.captureApplied })),
+  );
+
+  const okSteps = stepResults.filter((s) => s.ok).length;
+  const failedSteps = stepResults.length - okSteps;
+
+  // Omite captureApplied/captureErrors por step quando vazios — comum quando o
+  // endpoint não define `capture` — em vez de pagar `{}`/`[]` em cada step do flow.
+  // `minimal` também corta duração e valores capturados (os nomes seguem em `summary`).
+  const stepsOut = stepResults.map((s) => {
+    const { captureApplied, captureErrors, durationMs, ...rest } = s;
+    const lean = responseDetail === "minimal";
+    return omitNullish({
+      ...rest,
+      ...(lean ? {} : { durationMs }),
+      ...(!lean && Object.keys(captureApplied).length > 0
+        ? { captureApplied }
+        : {}),
+      ...(captureErrors.length > 0 ? { captureErrors } : {}),
+    });
+  });
+
+  return {
+    ok: okOverall,
+    summary: {
+      okSteps,
+      failedSteps,
+      capturedVariables: captured,
+    },
+    steps: stepsOut,
+  };
+}
