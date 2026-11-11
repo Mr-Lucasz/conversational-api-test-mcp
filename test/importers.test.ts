@@ -8,6 +8,7 @@ import { parseCurl, tokenizeShell } from "../src/conversion/curl.js";
 import { executeEndpointById } from "../src/http/runEndpoint.js";
 import { convertLegacyToCanonicalHandler } from "../src/tools/convertLegacyToCanonical.js";
 import { importCurlHandler } from "../src/tools/importCurl.js";
+import { importPostmanEnvironmentHandler } from "../src/tools/importPostmanEnvironment.js";
 import { basicHeader, fixtureAuth, postmanAuthFixtureText } from "./postmanAuthFixture.js";
 
 const origFetch = globalThis.fetch;
@@ -229,5 +230,56 @@ describe("convert_legacy_to_canonical", () => {
     }
     expect(yaml).toContain("{{apiKey}}");
     expect(result.secretsMovedToEnvFile.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("import_postman_environment", () => {
+  const envExport = JSON.stringify({
+    name: "Staging",
+    _postman_variable_scope: "environment",
+    values: [
+      { key: "base_url", value: "https://staging.example.com", enabled: true },
+      { key: "userId", value: "42", enabled: true },
+      { key: "old", value: "x", enabled: false },
+      { key: "blank", value: "", enabled: true },
+      { key: "has space", value: "y", enabled: true },
+    ],
+  });
+
+  it("writes enabled values with the environment prefix and keeps existing keys", async () => {
+    const root = ws();
+    writeFileSync(join(root, ".env.mcp.local"), "STAGING_userId=7\n");
+    const result = out(
+      await importPostmanEnvironmentHandler({
+        workspaceRoot: root,
+        legacyContent: envExport,
+        environment: "staging",
+      }),
+    );
+    expect(result.writtenToEnvFile).toEqual(["STAGING_base_url"]);
+    expect(result.alreadySetKeptAsIs).toEqual(["STAGING_userId"]);
+    expect(result.skipped.map((s: { key: string }) => s.key)).toEqual(["old", "blank", "has space"]);
+    expect(JSON.stringify(result)).not.toContain("staging.example.com");
+    expect(read(root, ".env.mcp.local")).toBe(
+      "STAGING_userId=7\nSTAGING_base_url=https://staging.example.com\n",
+    );
+  });
+
+  it("reads a file from the workspace and refuses a collection", async () => {
+    const root = ws();
+    writeFileSync(join(root, "dev.postman_environment.json"), envExport);
+    const ok = out(
+      await importPostmanEnvironmentHandler({
+        workspaceRoot: root,
+        legacyRelativePath: "dev.postman_environment.json",
+      }),
+    );
+    expect(ok.writtenToEnvFile).toEqual(["base_url", "userId"]);
+    const bad = await importPostmanEnvironmentHandler({
+      workspaceRoot: root,
+      legacyContent: JSON.stringify({ info: {}, item: [], values: [] }),
+    });
+    expect(bad.isError).toBe(true);
+    expect(bad.content[0].text).toContain("convert_legacy_to_canonical");
   });
 });
