@@ -2,6 +2,7 @@ import type { FC } from "react";
 import { AbsoluteFill, Composition, Html5Audio, Series, staticFile, Still, useCurrentFrame } from "remotion";
 import { Frame } from "./components";
 import { Cover } from "./Cover";
+import { PostmanCover } from "./PostmanCover";
 import { PostmanRun, postmanTotalFrames } from "./PostmanRun";
 import { Cases, Chat, Checklist, Finding, Hook, Outro, Promises } from "./scenes";
 import { scenes, totalFrames, video } from "./theme";
@@ -61,5 +62,6 @@ export const Root: FC = () => (
       height={video.height}
     />
     <Still id="Cover" component={Cover} width={video.width} height={video.height} />
+    <Still id="PostmanCover" component={PostmanCover} width={video.width} height={video.height} />
   </>
 );

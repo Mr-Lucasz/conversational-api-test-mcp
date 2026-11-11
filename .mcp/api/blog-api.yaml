@@ -1,0 +1,63 @@
+version: "1"
+service: blog-api
+base_url: "{{base_url}}"
+variables:
+  base_url: https://jsonplaceholder.typicode.com
+endpoints:
+  - id: postman_0_Posts_List_posts
+    method: GET
+    path: /posts
+    description: Posts/List posts
+    headers:
+      Accept: application/json
+  - id: postman_1_Posts_Get_post
+    method: GET
+    path: /posts/1
+    description: Posts/Get post
+    headers:
+      Accept: application/json
+  - id: postman_2_Posts_Create_post
+    method: POST
+    path: /posts
+    description: Posts/Create post
+    headers:
+      Content-Type: application/json
+    body:
+      title: Testando API conversando
+      body: Collection do Postman rodando dentro do agente.
+      userId: 1
+  - id: postman_3_Posts_Update_post
+    method: PUT
+    path: /posts/1
+    description: Posts/Update post
+    headers:
+      Content-Type: application/json
+    body:
+      id: 1
+      title: Titulo revisado
+      body: Conteudo revisado.
+      userId: 1
+  - id: postman_4_Posts_Patch_post_title
+    method: PATCH
+    path: /posts/1
+    description: Posts/Patch post title
+    headers:
+      Content-Type: application/json
+    body:
+      title: So o titulo mudou
+  - id: postman_5_Posts_Delete_post
+    method: DELETE
+    path: /posts/1
+    description: Posts/Delete post
+  - id: postman_6_Comments_Comments_of_post
+    method: GET
+    path: /comments?postId=1
+    description: Comments/Comments of post
+    headers:
+      Accept: application/json
+  - id: postman_7_Users_Get_user
+    method: GET
+    path: /users/1
+    description: Users/Get user
+    headers:
+      Accept: application/json

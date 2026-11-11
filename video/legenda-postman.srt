@@ -1,0 +1,83 @@
+1
+00:00:00,267 --> 00:00:01,105
+Fala, pessoal!
+
+2
+00:00:01,155 --> 00:00:04,848
+Hoje eu vou te mostrar como pegar uma collection do Postman
+
+3
+00:00:04,898 --> 00:00:07,577
+e rodar ela inteirinha... sem sair do chat.
+
+4
+00:00:08,567 --> 00:00:11,490
+Essa aqui é a nossa collection de exemplo.
+
+5
+00:00:11,540 --> 00:00:13,613
+Oito requests, em três pastas.
+
+6
+00:00:13,663 --> 00:00:17,578
+E repara: o endereço da API tá numa variável, o baseUrl.
+
+7
+00:00:17,628 --> 00:00:20,197
+Guarda isso, que já já faz diferença.
+
+8
+00:00:21,200 --> 00:00:22,849
+Agora vem a parte legal.
+
+9
+00:00:22,899 --> 00:00:26,248
+Eu só escrevo: importa a collection e roda tudo.
+
+10
+00:00:26,298 --> 00:00:29,293
+O MCP converte pra YAML, sem perder nada...
+
+11
+00:00:29,343 --> 00:00:33,470
+e já resolve a base URL sozinho, a partir daquela variável.
+
+12
+00:00:34,467 --> 00:00:38,147
+Aí ele chama o execute API flow. Uma vez só!
+
+13
+00:00:38,197 --> 00:00:41,624
+Olha só: GET, POST, PUT, PATCH, DELETE...
+
+14
+00:00:41,674 --> 00:00:44,337
+e cada passo com a sua asserção.
+
+15
+00:00:44,387 --> 00:00:48,577
+Status, campos, tamanho da lista. Tudo verificado.
+
+16
+00:00:49,567 --> 00:00:51,324
+Resultado? Oito de oito!
+
+17
+00:00:51,374 --> 00:00:54,486
+A collection inteira em um segundo e meio,
+
+18
+00:00:54,536 --> 00:00:55,917
+numa única chamada.
+
+19
+00:00:56,900 --> 00:00:58,626
+E o melhor: é open source.
+
+20
+00:00:58,676 --> 00:01:01,974
+Testa aí, e me conta nos comentários o que achou.
+
+21
+00:01:02,024 --> 00:01:02,930
+Até a próxima!
