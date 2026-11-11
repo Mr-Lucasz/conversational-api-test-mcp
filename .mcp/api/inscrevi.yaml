@@ -10,8 +10,8 @@ endpoints:
       Content-Type: application/json
     body:
       nome: Ana Lima
-      email: ana@exemplo.com
-      senha: Senha@123
+      email: "{{NOVO_USUARIO_EMAIL}}"
+      senha: "{{NOVO_USUARIO_SENHA}}"
   - id: usuario_me
     method: GET
     path: /api/usuarios/me
@@ -28,7 +28,7 @@ endpoints:
       accept: "*/*"
       Content-Type: application/json
     body:
-      email: maria@inscrevi.dev
-      senha: Senha@123
+      email: "{{INSCREVI_EMAIL}}"
+      senha: "{{INSCREVI_SENHA}}"
     capture:
       TOKEN: $.token

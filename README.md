@@ -106,6 +106,8 @@ npm run build
 }
 ```
 
+That is the VS Code format. Cursor and Claude Code read the same entry under `"mcpServers"` instead of `"servers"`, without the `"type"` line.
+
 **2. Open the project whose API you want to test and say `hi Vander`.**
 
 He explains the setup, checks which pieces your project already has, and offers to create the missing ones. Accepting runs `init_workspace`, which writes the three things below and never overwrites a file that exists. You can also create them by hand.
@@ -158,6 +160,138 @@ STAGING_BASE_URL=https://staging.example.com/v1
 A prefix turns one YAML into several environments: after "use staging", `{{BASE_URL}}` reads `STAGING_BASE_URL` first and falls back to `BASE_URL`.
 
 **5. Ask.** No file to write yet? `init_workspace` drops in a demo against httpbin.org that runs without any secret, and [`examples/`](examples/) has three more you can copy into `.mcp/api/`.
+
+## Coming from Postman
+
+You do not rebuild your requests. You hand over what you already have — a cURL command or an exported collection — and keep working from the chat. Everything below was run against the built server; the outputs are what it returned.
+
+**Where everything ends up.** All of it sits in the project whose API you are testing, not in this repository:
+
+```text
+your-project/
+├── .mcp/
+│   └── api/
+│       ├── orders.yaml              # one YAML per service: commit it
+│       └── shop.yaml
+├── .env.mcp.local                   # base URLs, tokens, passwords: never commit it
+├── .gitignore                       # contains .env.mcp.local
+└── shop.postman_collection.json     # your export: read, never changed
+```
+
+### Paste a cURL
+
+> **You:** turn this into a request called `create_order`, in `orders.yaml`
+>
+> ```bash
+> curl -X POST "https://httpbin.org/anything/orders?source=app" \
+>   -H "Authorization: Bearer demo-token-123" \
+>   -H "Content-Type: application/json" \
+>   -d '{"item":"notebook","quantity":2}'
+> ```
+
+The agent calls `import_curl`, which answers:
+
+```text
+definition: .mcp/api/orders.yaml
+created: true
+requestId: create_order
+method: POST
+url: "https://httpbin.org/anything/orders"
+secretsMovedToEnvFile[1]: CREATE_ORDER_TOKEN
+```
+
+and writes this file. The query string became `params`, the JSON body became `body`, and the token is gone from it:
+
+```yaml
+# .mcp/api/orders.yaml
+version: "1"
+base_url: https://httpbin.org
+endpoints:
+  - id: create_order
+    method: POST
+    path: /anything/orders
+    headers:
+      Content-Type: application/json
+    params:
+      source: app
+    body:
+      item: notebook
+      quantity: 2
+    auth: Bearer {{CREATE_ORDER_TOKEN}}
+```
+
+The token itself was appended to `.env.mcp.local` as `CREATE_ORDER_TOKEN=...`, and `.env.mcp.local` was added to `.gitignore` if it was not there. From here on it is "run `create_order`".
+
+### Hand over a collection
+
+Export the collection from Postman (*Export → Collection v2.1*) and either drop the JSON in the project or paste its content in the chat.
+
+> **You:** here is my Postman collection, `shop.postman_collection.json`. Convert it to `shop.yaml`.
+
+The agent calls `convert_legacy_to_canonical`, which answers:
+
+```text
+outputPath: .mcp/api/shop.yaml
+source: postman
+losses[2]{code,message}:
+  POSTMAN_PRE_REQUEST_SCRIPTS,Events / pre-request scripts are not executed.
+  POSTMAN_TESTS,Post-run test scripts are not converted.
+endpointCount: 2
+```
+
+```yaml
+# .mcp/api/shop.yaml
+version: "1"
+service: Shop
+base_url: "{{base_url}}"
+variables:
+  base_url: https://httpbin.org
+endpoints:
+  - id: postman_0_List_orders
+    method: GET
+    path: /anything/orders?status=open
+    description: List orders
+    headers:
+      X-Request-Id: "{{rid}}"
+  - id: postman_1_Create_order
+    method: POST
+    path: /anything/orders
+    description: Create order
+    headers:
+      Content-Type: application/json
+    body:
+      item: notebook
+      quantity: 2
+```
+
+Every request in the collection, folders included, is now an endpoint. The `losses` list is the server telling you what it left behind, and the conversion needs a few minutes of finishing — ask the agent to do it, it previews each change before writing:
+
+| What you had in Postman | What the import does | How to finish |
+|-------------------------|----------------------|---------------|
+| The host in each URL | Becomes `base_url`, taken from the collection variable used as host (`{{baseUrl}}/orders`) or from the first absolute URL. With neither, `base_url` stays empty and `losses` reports `POSTMAN_BASE_URL_UNRESOLVED`. | Nothing, when it was found. Otherwise "set `base_url` to `https://api.example.com`", or put `BASE_URL=...` in `.env.mcp.local` and use `{{BASE_URL}}`. |
+| The **Authorization** tab (collection, folder or request) | Not converted, and not reported in `losses`. | Add `auth: Bearer {{TOKEN}}` to the requests, plus `auth_dependency` if a login request produces the token. |
+| Pre-request scripts | Not executed. Reported in `losses`, with a hint when the script generated ids or fetched a token. | `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}` for generated values; `capture` + `auth_dependency` for tokens. |
+| Tests (`pm.test`) | Not converted. Reported in `losses`. | `assert` on the request or on a flow step — see [value checks](#value-checks). |
+| Request names | Become ids such as `postman_0_List_orders`. | "Rename it to `list_orders`." |
+| Query string | Stays inline in `path`; disabled params are dropped. | Works as it is; move it to `params` if you want to vary it. |
+| `form-data` and other non-raw bodies | Not mapped. Reported in `losses`. | Rewrite as `form` (URL-encoded) or `body`. |
+| Postman environments | Not imported. | One block of keys per environment in `.env.mcp.local`: `BASE_URL`, `STAGING_BASE_URL`, … |
+
+The collection file is only read. Keep it, delete it, or leave it out of git — the YAML is the source of truth from now on.
+
+When you ask the agent to look for something to import without naming a file, `discover_legacy_api_sources` searches the project for `*postman*.json`, `collection*.json`, `openapi*.{yaml,yml,json}`, `swagger*.{yaml,yml}` and `insomnia*.{json,yaml}`. A file with another name is converted when you give its path.
+
+### A day of work, in prompts
+
+| Moment | You say |
+|--------|---------|
+| First time in the project | "hi Vander, set this project up" |
+| Bringing requests in | "turn this cURL into a request called `create_order`" · "convert `shop.postman_collection.json`" |
+| Tidying an import | "set `base_url` to …" · "rename `postman_0_List_orders` to `list_orders`" · "these requests use the token from `login`" |
+| Running | "run `list_orders`" · "run it on staging" · "show me what `create_order` would send" |
+| Chaining | "create an order, then fetch it by the id that came back" · "save that as a flow called `smoke`" |
+| Checking | "check that it returns 200 and `$.items` is not empty" · "run the smoke flow" |
+| Reviewing | "Vander, is `create_order` solid?" |
 
 ## What you can ask
 
