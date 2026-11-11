@@ -6,6 +6,11 @@ import {
   type PostmanScriptSignals,
 } from "./knownLosses.js";
 import type { LegacyParserStrategy, ParseResult } from "./LegacyParserStrategy.js";
+import {
+  rewriteDynamicVariables,
+  translatePreRequestScripts,
+  translateTestScripts,
+} from "./postmanScripts.js";
 
 type PostmanEvent = {
   listen?: string;
@@ -125,7 +130,12 @@ function urlToPath(url: PostmanUrl | string | undefined): string {
   return (path ? `/${path}` : "/") + urlQuery(url);
 }
 
-type FlatRequest = { name: string; req: PostmanRequest; auth: PostmanAuth | undefined };
+type FlatRequest = {
+  name: string;
+  req: PostmanRequest;
+  auth: PostmanAuth | undefined;
+  events: PostmanEvent[];
+};
 
 /** The auth that applies at this level: its own, unless absent or `inherit`. */
 function effectiveAuth(
@@ -140,6 +150,7 @@ function collectItems(
   out: FlatRequest[],
   prefix: string,
   inheritedAuth: PostmanAuth | undefined,
+  inheritedEvents: PostmanEvent[],
 ): void {
   if (!items) {
     return;
@@ -147,13 +158,22 @@ function collectItems(
   for (const it of items) {
     const name = prefix ? `${prefix}/${it.name ?? "item"}` : (it.name ?? "item");
     const auth = effectiveAuth(it.auth, inheritedAuth);
+    // Collection and folder scripts run around every request below them, before its own.
+    const events = [...inheritedEvents, ...(it.event ?? [])];
     if (it.item?.length) {
-      collectItems(it.item, out, name, auth);
+      collectItems(it.item, out, name, auth, events);
     }
     if (it.request) {
-      out.push({ name, req: it.request, auth: effectiveAuth(it.request.auth, auth) });
+      out.push({ name, req: it.request, auth: effectiveAuth(it.request.auth, auth), events });
     }
   }
+}
+
+function scriptsOf(events: PostmanEvent[], listen: "prerequest" | "test"): string[] {
+  return events
+    .filter((e) => e.listen === listen)
+    .map((e) => (Array.isArray(e.script?.exec) ? e.script.exec.join("\n") : ""))
+    .filter((t) => t.trim());
 }
 
 /** One auth parameter, from the v2.1 list form or the v2.0 object form. */
@@ -349,15 +369,12 @@ export class PostmanParser implements LegacyParserStrategy {
       auth?: PostmanAuth;
     };
     const scripts = collectPostmanScriptsFromCollection(o);
-    losses.push(
-      ...buildPostmanScriptLosses(scripts.signals, {
-        prerequest: scripts.prerequest.length,
-        test: scripts.test.length,
-      }),
-    );
+    const untranslatedPre: string[] = [];
+    const untranslatedTests: string[] = [];
+    const generatedVariables: Record<string, string> = {};
 
     const flat: FlatRequest[] = [];
-    collectItems(o.item, flat, "", effectiveAuth(o.auth, undefined));
+    collectItems(o.item, flat, "", effectiveAuth(o.auth, undefined), o.event ?? []);
 
     const endpoints: EndpointDefinition[] = [];
     const unmappedBodies = new Map<string, string[]>();
@@ -365,7 +382,7 @@ export class PostmanParser implements LegacyParserStrategy {
     const note = (map: Map<string, string[]>, key: string, name: string) =>
       map.set(key, [...(map.get(key) ?? []), name]);
     let i = 0;
-    for (const { name, req, auth } of flat) {
+    for (const { name, req, auth, events } of flat) {
       const method = (req.method ?? "GET").toUpperCase();
       const headers: Record<string, string> = {};
       for (const h of req.header ?? []) {
@@ -406,9 +423,25 @@ export class PostmanParser implements LegacyParserStrategy {
       if (Object.keys(headers).length) {
         endpoint.headers = headers;
       }
-      endpoints.push(endpoint);
+      const tests = translateTestScripts(scriptsOf(events, "test"));
+      if (tests.assert) endpoint.assert = tests.assert;
+      if (tests.capture) endpoint.capture = tests.capture;
+      if (tests.unconverted) untranslatedTests.push(name);
+      const pre = translatePreRequestScripts(scriptsOf(events, "prerequest"));
+      for (const [k, v] of Object.entries(pre.variables ?? {})) generatedVariables[k] ??= v;
+      if (pre.unconverted) untranslatedPre.push(name);
+      endpoints.push(rewriteDynamicVariables(endpoint));
     }
 
+    losses.push(
+      ...buildPostmanScriptLosses(scripts.signals, {
+        prerequest: untranslatedPre.length,
+        test: untranslatedTests.length,
+      }).map((l) => ({
+        ...l,
+        message: `${l.message} Requests: ${(l.code === "POSTMAN_TESTS" ? untranslatedTests : untranslatedPre).join(", ")}.`,
+      })),
+    );
     for (const [mode, names] of unmappedBodies) {
       losses.push({
         code: "POSTMAN_BODY_MODE",
@@ -438,7 +471,7 @@ export class PostmanParser implements LegacyParserStrategy {
       version: "1",
       service: options?.serviceName ?? o.info?.name ?? "imported-postman",
       base_url: "{{base_url}}",
-      variables: { base_url: baseUrl },
+      variables: { base_url: baseUrl, ...generatedVariables },
       endpoints,
     };
 

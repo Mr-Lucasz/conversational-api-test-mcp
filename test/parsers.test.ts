@@ -115,7 +115,10 @@ describe("legacy parsers", () => {
     const r = parseLegacyToCanonical(raw, { serviceName: "t" });
     const codes = r.losses.map((l) => l.code);
     expect(codes).toContain("POSTMAN_PRE_REQUEST_SCRIPTS");
-    expect(codes).toContain("POSTMAN_TESTS");
+    // pm.response.to.have.status(200) is translated, so no test script is left to port.
+    expect(codes).not.toContain("POSTMAN_TESTS");
+    expect(r.canonical.endpoints[0].assert).toEqual({ status: 200 });
+    expect(r.canonical.variables?.rid).toBe("{{$uuid}}");
     const pre = r.losses.find((l) => l.code === "POSTMAN_PRE_REQUEST_SCRIPTS");
     expect(pre?.message).toMatch(/\{\{\$uuid\}\}/);
     expect(pre?.message).toMatch(/auth_dependency/i);
