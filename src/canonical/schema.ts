@@ -78,6 +78,11 @@ export const assertSpecSchema = z
     jsonPathExists: z.string().optional(),
     maxDurationMs: z.number().int().positive().optional(),
     checks: z.array(valueCheckSchema).optional(),
+    /**
+     * JSON Schema the JSON body must satisfy: inline, or a file in the workspace with an
+     * optional JSON pointer — `openapi.yaml#/components/schemas/Order`.
+     */
+    schema: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).optional(),
   })
   .strict();
 
@@ -85,7 +90,7 @@ export type AssertSpec = z.infer<typeof assertSpecSchema>;
 
 /** One-line summary of the assert shape, for tool schemas that publish it shallowly. */
 export const ASSERT_HINT =
-  "{status, jsonPathExists, maxDurationMs, checks: [{path (JSONPath; omit = whole body), contains | containsAny | notContains | matches | equals | min | max | minLength | maxLength | includesAll | includesAny | subsetOf (another JSONPath), ignoreCase, minRatio}]}";
+  "{status, jsonPathExists, maxDurationMs, checks: [{path (JSONPath; omit = whole body), contains | containsAny | notContains | matches | equals | min | max | minLength | maxLength | includesAll | includesAny | subsetOf (another JSONPath), ignoreCase, minRatio}], schema (inline JSON Schema, or \"file.yaml#/components/schemas/X\" in the workspace)}";
 
 export const endpointAssertSchema = assertSpecSchema.optional();
 

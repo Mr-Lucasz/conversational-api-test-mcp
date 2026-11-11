@@ -51,7 +51,7 @@ export async function completeSuccessfulExecution(input: {
     : captureFromJsonBody(workspaceRoot, bodyText, ep.capture);
 
   if (ep.assert) {
-    const ar = assertOnResponse(response, ep.assert);
+    const ar = assertOnResponse(response, ep.assert, workspaceRoot);
     if (!ar.ok) {
       return {
         ok: false,

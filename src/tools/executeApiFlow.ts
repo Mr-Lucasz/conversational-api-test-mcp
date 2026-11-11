@@ -252,7 +252,7 @@ export async function executeApiFlowHandler(
       if (lastOk && assert) {
         const lastResp = getLastResponse(workspaceRoot);
         const ar = lastResp
-          ? assertOnResponse(lastResp, assert)
+          ? assertOnResponse(lastResp, assert, workspaceRoot)
           : { ok: false as const, message: "no response captured for assert" };
         if (!ar.ok) {
           lastOk = false;
