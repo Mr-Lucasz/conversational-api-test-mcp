@@ -2,6 +2,7 @@ import { JSONPath } from "jsonpath-plus";
 import type { AssertSpec, ValueCheck } from "../canonical/schema.js";
 import { maskIfSensitive } from "../http/redact.js";
 import { safeSliceString } from "../http/safeSlice.js";
+import { schemaFailures } from "./jsonSchema.js";
 import type { LastHttpResponse } from "../session/SessionStore.js";
 
 export type { AssertSpec } from "../canonical/schema.js";
@@ -168,6 +169,7 @@ function runCheck(
 export function collectAssertFailures(
   response: LastHttpResponse,
   spec: AssertSpec,
+  workspaceRoot?: string,
 ): string[] {
   const out: string[] = [];
   if (spec.status !== undefined && response.status !== spec.status) {
@@ -183,7 +185,8 @@ export function collectAssertFailures(
     }
   }
 
-  const needsBody = spec.jsonPathExists !== undefined || spec.checks?.length;
+  const needsBody =
+    spec.jsonPathExists !== undefined || spec.checks?.length || spec.schema !== undefined;
   if (!needsBody) {
     return out;
   }
@@ -211,14 +214,22 @@ export function collectAssertFailures(
   for (const check of spec.checks ?? []) {
     out.push(...runCheck(check, response.bodyText, data, isJson));
   }
+  if (spec.schema !== undefined) {
+    out.push(
+      ...(isJson
+        ? schemaFailures(data, spec.schema, workspaceRoot)
+        : ["schema: response body is not JSON"]),
+    );
+  }
   return out;
 }
 
 export function assertOnResponse(
   response: LastHttpResponse,
   spec: AssertSpec,
+  workspaceRoot?: string,
 ): { ok: true } | { ok: false; message: string } {
-  const failures = collectAssertFailures(response, spec);
+  const failures = collectAssertFailures(response, spec, workspaceRoot);
   return failures.length
     ? { ok: false, message: failures.join("; ") }
     : { ok: true };

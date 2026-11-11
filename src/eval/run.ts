@@ -70,7 +70,7 @@ async function runOnce(input: EvalRunInput, evalCase: EvalCase): Promise<EvalRun
   }
 
   const specs = [evaluation.expect, evalCase.expect].filter((s) => s !== undefined);
-  const failures = specs.flatMap((s) => collectAssertFailures(got, s));
+  const failures = specs.flatMap((s) => collectAssertFailures(got, s, input.workspaceRoot));
   // Nobody said which status to expect: an error status is not a pass.
   if (
     specs.every((s) => s.status === undefined) &&

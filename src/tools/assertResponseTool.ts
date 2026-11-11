@@ -16,6 +16,12 @@ export const assertResponseInputSchema = z.object({
     .describe(
       "Value checks, each {path (JSONPath; omit = whole body), contains | containsAny | notContains | matches | equals | min | max | minLength | maxLength | includesAll | includesAny | subsetOf, ignoreCase, minRatio}.",
     ),
+  schema: z
+    .union([z.string(), z.record(z.unknown())])
+    .optional()
+    .describe(
+      'JSON Schema the body must satisfy: an inline object, or a file in the workspace with a JSON pointer, e.g. "openapi.yaml#/components/schemas/Order" (OpenAPI 3.0/3.1 and its internal $refs work).',
+    ),
 });
 
 export async function assertResponseHandler(
@@ -34,14 +40,14 @@ export async function assertResponseHandler(
     if (!last) {
       throw new Error("No last HTTP response in session; run execute_api_request first.");
     }
-    const { status, jsonPathExists, maxDurationMs, checks } = parsed.data;
+    const { status, jsonPathExists, maxDurationMs, checks, schema } = parsed.data;
     const spec = assertSpecSchema.safeParse(
-      omitNullish({ status, jsonPathExists, maxDurationMs, checks }),
+      omitNullish({ status, jsonPathExists, maxDurationMs, checks, schema }),
     );
     if (!spec.success) {
       throw new Error(`invalid assert — ${describeIssues(spec.error)}`);
     }
-    const failures = collectAssertFailures(last, spec.data);
+    const failures = collectAssertFailures(last, spec.data, workspaceRoot);
     if (failures.length) {
       throw new Error(failures.join("; "));
     }
