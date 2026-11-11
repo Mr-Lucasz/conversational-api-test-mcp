@@ -8,6 +8,7 @@ import { parseCurl, tokenizeShell } from "../src/conversion/curl.js";
 import { executeEndpointById } from "../src/http/runEndpoint.js";
 import { convertLegacyToCanonicalHandler } from "../src/tools/convertLegacyToCanonical.js";
 import { importCurlHandler } from "../src/tools/importCurl.js";
+import { basicHeader, fixtureAuth, postmanAuthFixtureText } from "./postmanAuthFixture.js";
 
 const origFetch = globalThis.fetch;
 afterEach(() => {
@@ -204,5 +205,29 @@ describe("convert_legacy_to_canonical", () => {
     });
     expect(result.isError).toBeFalsy();
     expect(existsSync(join(root, ".mcp/api/imported.yaml"))).toBe(true);
+  });
+
+  it("moves credentials from the Authorization tab to the env file", async () => {
+    const root = ws();
+    const result = out(
+      await convertLegacyToCanonicalHandler({
+        workspaceRoot: root,
+        legacyContent: postmanAuthFixtureText,
+        outputRelativePath: ".mcp/api/auth.yaml",
+      }),
+    );
+    const yaml = read(root, ".mcp/api/auth.yaml");
+    const secrets = [
+      fixtureAuth().token,
+      fixtureAuth("Api key in query").value,
+      fixtureAuth("Digest").password,
+      basicHeader("Admin").slice("Basic ".length),
+    ];
+    for (const secret of secrets) {
+      expect(yaml).not.toContain(secret);
+      expect(read(root, ".env.mcp.local")).toContain(secret);
+    }
+    expect(yaml).toContain("{{apiKey}}");
+    expect(result.secretsMovedToEnvFile.length).toBeGreaterThanOrEqual(4);
   });
 });

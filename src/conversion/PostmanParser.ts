@@ -17,13 +17,30 @@ type PostmanItem = {
   item?: PostmanItem[];
   request?: PostmanRequest;
   event?: PostmanEvent[];
+  auth?: PostmanAuth;
 };
+
+type PostmanKeyValue = { key?: string; value?: unknown; disabled?: boolean; type?: string };
+
+type PostmanBody = {
+  mode?: string;
+  raw?: string;
+  urlencoded?: PostmanKeyValue[];
+  graphql?: { query?: string; variables?: unknown };
+};
+
+/**
+ * Authorization tab. v2.1 stores each parameter as `[{ key, value }]`; v2.0 as a plain object.
+ * `noauth` disables auth; `inherit` (or no `auth` at all) takes it from the folder or collection.
+ */
+type PostmanAuth = { type?: string } & Record<string, unknown>;
 
 type PostmanRequest = {
   method?: string;
-  header?: { key: string; value: string }[];
-  body?: { mode?: string; raw?: string };
+  header?: { key: string; value: string; disabled?: boolean }[];
+  body?: PostmanBody;
   url?: PostmanUrl | string;
+  auth?: PostmanAuth;
 };
 
 type PostmanUrl = {
@@ -108,22 +125,143 @@ function urlToPath(url: PostmanUrl | string | undefined): string {
   return (path ? `/${path}` : "/") + urlQuery(url);
 }
 
+type FlatRequest = { name: string; req: PostmanRequest; auth: PostmanAuth | undefined };
+
+/** The auth that applies at this level: its own, unless absent or `inherit`. */
+function effectiveAuth(
+  own: PostmanAuth | undefined,
+  inherited: PostmanAuth | undefined,
+): PostmanAuth | undefined {
+  return own?.type && own.type !== "inherit" ? own : inherited;
+}
+
 function collectItems(
   items: PostmanItem[] | undefined,
-  out: { name: string; req: PostmanRequest }[],
+  out: FlatRequest[],
   prefix: string,
+  inheritedAuth: PostmanAuth | undefined,
 ): void {
   if (!items) {
     return;
   }
   for (const it of items) {
     const name = prefix ? `${prefix}/${it.name ?? "item"}` : (it.name ?? "item");
+    const auth = effectiveAuth(it.auth, inheritedAuth);
     if (it.item?.length) {
-      collectItems(it.item, out, name);
+      collectItems(it.item, out, name, auth);
     }
     if (it.request) {
-      out.push({ name, req: it.request });
+      out.push({ name, req: it.request, auth: effectiveAuth(it.request.auth, auth) });
     }
+  }
+}
+
+/** One auth parameter, from the v2.1 list form or the v2.0 object form. */
+function authParam(auth: PostmanAuth, key: string): string | undefined {
+  const params = auth[auth.type as string];
+  let value: unknown;
+  if (Array.isArray(params)) {
+    value = (params as PostmanKeyValue[]).find((p) => p.key === key)?.value;
+  } else if (params && typeof params === "object") {
+    value = (params as Record<string, unknown>)[key];
+  }
+  return value === undefined || value === null || value === "" ? undefined : String(value);
+}
+
+type MappedAuth = Pick<EndpointDefinition, "auth" | "digest_auth"> & {
+  header?: [string, string];
+  param?: [string, string];
+};
+
+/**
+ * Canonical form of a Postman auth; nothing for `noauth` or an empty one.
+ * `unsupported` names the type when there is no canonical equivalent.
+ */
+function mapAuth(auth: PostmanAuth | undefined): { mapped?: MappedAuth; unsupported?: string } {
+  if (!auth?.type || auth.type === "noauth") {
+    return {};
+  }
+  switch (auth.type) {
+    case "bearer": {
+      const token = authParam(auth, "token");
+      return token ? { mapped: { auth: `Bearer ${token}` } } : {};
+    }
+    case "basic": {
+      const username = authParam(auth, "username") ?? "";
+      const password = authParam(auth, "password") ?? "";
+      if (!username && !password) {
+        return {};
+      }
+      if (`${username}${password}`.includes("{{")) {
+        // Only known at run time, and `auth` is sent as written: there is no base64 step.
+        return { unsupported: "basic with {{variables}}" };
+      }
+      const encoded = Buffer.from(`${username}:${password}`).toString("base64");
+      return { mapped: { auth: `Basic ${encoded}` } };
+    }
+    case "digest": {
+      const username = authParam(auth, "username");
+      const password = authParam(auth, "password");
+      return username && password ? { mapped: { digest_auth: { username, password } } } : {};
+    }
+    case "apikey": {
+      const key = authParam(auth, "key");
+      if (!key) {
+        return {};
+      }
+      const value = authParam(auth, "value") ?? "";
+      return authParam(auth, "in") === "query"
+        ? { mapped: { param: [key, value] } }
+        : { mapped: { header: [key, value] } };
+    }
+    default:
+      return { unsupported: auth.type };
+  }
+}
+
+/** `raw` → `body` (parsed when JSON), `urlencoded` → `form`, `graphql` → JSON `body`. */
+function mapBody(
+  body: PostmanBody | undefined,
+): Pick<EndpointDefinition, "body" | "form"> & { unmapped?: string } {
+  if (!body?.mode) {
+    return {};
+  }
+  switch (body.mode) {
+    case "raw":
+      if (!body.raw) {
+        return {};
+      }
+      try {
+        return { body: JSON.parse(body.raw) as unknown };
+      } catch {
+        return { body: body.raw };
+      }
+    case "urlencoded": {
+      const form: Record<string, string> = {};
+      for (const p of body.urlencoded ?? []) {
+        if (p.key && !p.disabled) {
+          form[p.key] = p.value === undefined || p.value === null ? "" : String(p.value);
+        }
+      }
+      return Object.keys(form).length ? { form } : {};
+    }
+    case "graphql": {
+      const query = body.graphql?.query;
+      if (!query) {
+        return {};
+      }
+      let variables = body.graphql?.variables;
+      if (typeof variables === "string") {
+        try {
+          variables = variables.trim() ? (JSON.parse(variables) as unknown) : undefined;
+        } catch {
+          // keep the text as Postman had it
+        }
+      }
+      return { body: variables === undefined ? { query } : { query, variables } };
+    }
+    default:
+      return { unmapped: body.mode };
   }
 }
 
@@ -208,6 +346,7 @@ export class PostmanParser implements LegacyParserStrategy {
       info?: { name?: string };
       event?: PostmanEvent[];
       variable?: PostmanVariable[];
+      auth?: PostmanAuth;
     };
     const scripts = collectPostmanScriptsFromCollection(o);
     losses.push(
@@ -217,43 +356,69 @@ export class PostmanParser implements LegacyParserStrategy {
       }),
     );
 
-    const flat: { name: string; req: PostmanRequest }[] = [];
-    collectItems(o.item, flat, "");
+    const flat: FlatRequest[] = [];
+    collectItems(o.item, flat, "", effectiveAuth(o.auth, undefined));
 
     const endpoints: EndpointDefinition[] = [];
+    const unmappedBodies = new Map<string, string[]>();
+    const unsupportedAuth = new Map<string, string[]>();
+    const note = (map: Map<string, string[]>, key: string, name: string) =>
+      map.set(key, [...(map.get(key) ?? []), name]);
     let i = 0;
-    for (const { name, req } of flat) {
+    for (const { name, req, auth } of flat) {
       const method = (req.method ?? "GET").toUpperCase();
-      const path = urlToPath(req.url);
       const headers: Record<string, string> = {};
       for (const h of req.header ?? []) {
-        if (h.key) {
+        if (h.key && !h.disabled) {
           headers[h.key] = h.value ?? "";
         }
       }
-      let body: unknown;
-      if (req.body?.mode === "raw" && req.body.raw) {
-        try {
-          body = JSON.parse(req.body.raw) as unknown;
-        } catch {
-          body = req.body.raw;
-        }
+      const { unmapped, ...payload } = mapBody(req.body);
+      if (unmapped) {
+        note(unmappedBodies, unmapped, name);
       }
-      const id = `postman_${i++}_${sanitizeId(name)}`;
-      endpoints.push({
-        id,
+      const endpoint: EndpointDefinition = {
+        id: `postman_${i++}_${sanitizeId(name)}`,
         method: method as EndpointDefinition["method"],
-        path,
+        path: urlToPath(req.url),
         description: name,
-        headers: Object.keys(headers).length ? headers : undefined,
-        body,
-      });
+        ...payload,
+      };
+
+      // An Authorization header typed on the request wins over the Authorization tab.
+      const hasAuthHeader = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
+      const { mapped, unsupported } = hasAuthHeader ? {} : mapAuth(auth);
+      if (unsupported) {
+        note(unsupportedAuth, unsupported, name);
+      }
+      if (mapped?.auth) {
+        endpoint.auth = mapped.auth;
+      }
+      if (mapped?.digest_auth) {
+        endpoint.digest_auth = mapped.digest_auth;
+      }
+      if (mapped?.header) {
+        headers[mapped.header[0]] = mapped.header[1];
+      }
+      if (mapped?.param) {
+        endpoint.params = { [mapped.param[0]]: mapped.param[1] };
+      }
+      if (Object.keys(headers).length) {
+        endpoint.headers = headers;
+      }
+      endpoints.push(endpoint);
     }
 
-    if (flat.some((x) => x.req.body?.mode && x.req.body.mode !== "raw")) {
+    for (const [mode, names] of unmappedBodies) {
       losses.push({
         code: "POSTMAN_BODY_MODE",
-        message: "Non-raw body modes were not mapped in detail.",
+        message: `Body mode "${mode}" is not mapped; rewrite it as body or form: ${names.join(", ")}.`,
+      });
+    }
+    for (const [type, names] of unsupportedAuth) {
+      losses.push({
+        code: "POSTMAN_AUTH_UNSUPPORTED",
+        message: `Authorization "${type}" is not converted; set auth (or capture + auth_dependency) by hand: ${names.join(", ")}.`,
       });
     }
 
