@@ -233,9 +233,8 @@ The agent calls `convert_legacy_to_canonical`, which answers:
 ```text
 outputPath: .mcp/api/shop.yaml
 source: postman
-losses[2]{code,message}:
-  POSTMAN_PRE_REQUEST_SCRIPTS,Events / pre-request scripts are not executed.
-  POSTMAN_TESTS,Post-run test scripts are not converted.
+losses[1]{code,message}:
+  POSTMAN_PRE_REQUEST_SCRIPTS,"Some pre-request script lines could not be translated and will not run. Requests: Create order."
 endpointCount: 2
 ```
 
@@ -246,6 +245,7 @@ service: Shop
 base_url: "{{base_url}}"
 variables:
   base_url: https://httpbin.org
+  rid: "{{$uuid}}"              # from pm.environment.set("rid", …{{$guid}}…)
 endpoints:
   - id: postman_0_List_orders
     method: GET
@@ -253,15 +253,25 @@ endpoints:
     description: List orders
     headers:
       X-Request-Id: "{{rid}}"
+    assert:                      # from the pm.test blocks
+      status: 200
+      maxDurationMs: 1000
+      checks:
+        - path: $.args.status
+          equals: open
   - id: postman_1_Create_order
     method: POST
     path: /anything/orders
     description: Create order
-    headers:
-      Content-Type: application/json
     body:
       item: notebook
       quantity: 2
+    headers:
+      Content-Type: application/json
+    assert:
+      status: 200
+    capture:                     # from pm.environment.set("orderItem", pm.response.json().json.item)
+      orderItem: $.json.item
 ```
 
 Every request in the collection, folders included, is now an endpoint. The `losses` list is the server telling you what it left behind, and the conversion needs a few minutes of finishing — ask the agent to do it, it previews each change before writing:
@@ -270,13 +280,14 @@ Every request in the collection, folders included, is now an endpoint. The `loss
 |-------------------------|----------------------|---------------|
 | The host in each URL | Becomes `base_url`, taken from the collection variable used as host (`{{baseUrl}}/orders`) or from the first absolute URL. With neither, `base_url` stays empty and `losses` reports `POSTMAN_BASE_URL_UNRESOLVED`. | Nothing, when it was found. Otherwise "set `base_url` to `https://api.example.com`", or put `BASE_URL=...` in `.env.mcp.local` and use `{{BASE_URL}}`. |
 | The **Authorization** tab (collection, folder or request) | Converted per request, following Postman's inheritance (`inherit`, `noauth`): Bearer and Basic become `auth`, Digest becomes `digest_auth`, API Key becomes a header or a param. Literal credentials go to `.env.mcp.local`. Other types (OAuth 2.0, AWS, …), and Basic built from `{{variables}}`, are reported as `POSTMAN_AUTH_UNSUPPORTED`. | Nothing for the converted ones. For the rest, `auth: Bearer {{TOKEN}}`, plus `capture` + `auth_dependency` when a login request produces the token. |
-| Pre-request scripts | Not executed. Reported in `losses`, with a hint when the script generated ids or fetched a token. | `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}` for generated values; `capture` + `auth_dependency` for tokens. |
-| Tests (`pm.test`) | Not converted. Reported in `losses`. | `assert` on the request or on a flow step — see [value checks](#value-checks). |
+| Pre-request scripts | Generated values become variables: `uuid.v4()`, `crypto.randomUUID()` and `{{$guid}}` → `{{$uuid}}`, `Date.now()` → `{{$timestamp}}`, `new Date().toISOString()` → `{{$isoTimestamp}}`, literals as they are. Any other line (signatures, `pm.sendRequest`, …) is reported in `losses`, naming the requests. | `capture` + `auth_dependency` for tokens fetched by a script; the rest by hand. |
+| Tests (`pm.test`) | Translated to `assert`: `to.have.status`, `responseTime` below, and on body paths `eql`, `include`, `lengthOf`, `exist`, `above`/`below`, `match`. `pm.environment.set("x", jsonData.a.b)` becomes `capture`. Collection and folder scripts apply to every request below them. What is left is reported in `losses`, naming the requests. | `assert` by hand for the rest — see [value checks](#value-checks). |
+| Dynamic variables | `{{$guid}}` / `{{$randomUUID}}` become `{{$uuid}}`; `{{$timestamp}}` (seconds in Postman) becomes `{{$timestampSeconds}}`. | — |
 | Request names | Become ids such as `postman_0_List_orders`. | "Rename it to `list_orders`." |
 | Query string | Stays inline in `path`; disabled params are dropped. | Works as it is; move it to `params` if you want to vary it. |
 | Bodies | `raw` becomes `body`, `x-www-form-urlencoded` becomes `form`, GraphQL becomes a `{ query, variables }` body. `form-data` and binary files are not mapped and are reported as `POSTMAN_BODY_MODE`, naming the requests. | Rewrite those as `form` or `body`. |
 | Disabled headers and params | Left out, as Postman leaves them out of the request. | — |
-| Postman environments | Not imported. | One block of keys per environment in `.env.mcp.local`: `BASE_URL`, `STAGING_BASE_URL`, … |
+| Postman environments | Imported with `import_postman_environment` ("import `staging.postman_environment.json` as STAGING"): each enabled value goes to `.env.mcp.local` as `STAGING_<key>`, picked once `set_environment STAGING` is active. Existing keys are kept; values are never echoed back. | Postman exports initial values only: fill in the empty ones it reports. |
 
 The collection file is only read. Keep it, delete it, or leave it out of git — the YAML is the source of truth from now on.
 
@@ -304,6 +315,9 @@ Each line is something you would otherwise do by hand in an API client.
 | "Turn this cURL into a request" + the command | Creates the request in a YAML; any token in it goes to `.env.mcp.local`. | Import → Raw text |
 | "Run `forecast`" | Sends that one request and summarises the response. | Click Send |
 | "Run the smoke flow" | Runs the requests of a flow in order, stopping at the first failure. | Collection Runner |
+| — (in CI) `npx conversational-api-test-mcp run` | Runs every flow and writes a JUnit report; fails the job on a failing step. | Newman / Postman CLI |
+| "Import `staging.postman_environment.json` as STAGING" | Copies its values to `.env.mcp.local` under `STAGING_`. | Import → Environment |
+| "Check the response matches the `Order` schema in `openapi.yaml`" | Validates the body against that schema. | `tv4` / `ajv` in Tests |
 | "Log in and list the orders" | Runs the login first, keeps the token, uses it, and logs in again on a `401`. | Pre-request script |
 | "Create a post, then fetch it by the id that came back" | Captures a value from one response and uses it in the next request. | `pm.environment.set` in Tests |
 | "Use staging" | Switches the active environment for the following requests. | Environment dropdown |
@@ -336,6 +350,9 @@ Each line is something you would otherwise do by hand in an API client.
 | `plan_vander_checks` / `run_vander_checks` | VANDER review of one endpoint: checklist, then automatic execution — one row per check, the id prefix being the axis. |
 | `import_curl` | Turn a pasted `curl` command into a request in a YAML. |
 | `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Import Postman, OpenAPI or Insomnia — from a file or from pasted text. |
+| `import_postman_environment` | Copy a Postman environment export into `.env.mcp.local`, optionally under an environment prefix. |
+
+Every tool publishes MCP annotations: the read-only ones say so (clients can run them without asking), and the ones that send HTTP or replace files are marked as such.
 
 Recommended order: `list_api_definitions` → `summarize_api_definition` → `set_environment` (if needed) → `execute_api_request` or `execute_api_flow`.
 
@@ -371,7 +388,7 @@ VANDER builds on Stuart Ashman's VADER heuristic and adds an explicit Negative a
 
 - After `set_environment` (e.g. `STAGING`), `{{BASE_URL}}` resolves `STAGING_BASE_URL` first and falls back to `BASE_URL`.
 - Unresolved placeholders are left as literal `{{KEY}}` so the problem is visible.
-- Macros: `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}`, `{{$date:YYYY-MM-DD HH:mm:ss}}`.
+- Macros: `{{$uuid}}`, `{{$timestamp}}` (ms), `{{$timestampSeconds}}`, `{{$isoTimestamp}}`, `{{$date}}`, `{{$date:YYYY-MM-DD HH:mm:ss}}`.
 - `{{env.NAME}}` reads the server's `process.env`, but only for names listed in `MCP_API_ENV_PASSTHROUGH`.
 
 ### Requests
@@ -419,6 +436,16 @@ flows:
 | `subsetOf` | Every value at `path` also appears at this other JSONPath — citations among the retrieved documents. |
 
 An operator the server does not know is an error when the YAML is read, never a silent pass.
+
+`schema` checks the whole JSON body against a JSON Schema — written inline, or taken from a file in the project with a JSON pointer, usually your OpenAPI spec:
+
+```yaml
+assert:
+  status: 200
+  schema: openapi.yaml#/components/schemas/Order   # or an inline { type: object, required: [id] }
+```
+
+OpenAPI 3.0 and 3.1 both work (`nullable`, internal `$ref`s, `format`s). A failure names the path and the rule, e.g. `schema: /customer must have required property 'name'`. The file is re-read when it changes.
 
 ### Evals: endpoints whose answer varies
 
@@ -469,6 +496,26 @@ Things to know:
 - Eval runs do not capture variables or replace the session's last response; `auth_dependency` still logs in when needed.
 - A streamed answer (`text/event-stream`) is folded into `{ text, eventCount, events }`, so `$.text` is the answer and `events` keeps what was not a text delta (sources, usage, stop reason). Set `sse.textPath` on the request when the delta sits somewhere unusual.
 - [`examples/rag.example.yaml`](examples/rag.example.yaml) is a complete starting point.
+
+## Running in CI
+
+The same package runs your flows from a terminal, so the YAML that the agent uses also gates a pipeline:
+
+```bash
+npx conversational-api-test-mcp run --env STAGING --reporter junit --out reports/api.xml
+```
+
+- With no file, every definition under `.mcp/api/` is read and each of its `flows` runs (a file with no flows is skipped and listed). `--flow smoke` picks flows, `--request get_user` runs single requests, and `--all-endpoints` runs every request one by one — POST and DELETE included.
+- `--env` works as `set_environment`; secrets come from `.env.mcp.local` or, in CI, from a step that writes it from your secret store.
+- `--reporter` is `pretty` (default), `json` or `junit` (one testsuite per flow, one testcase per step, read by GitHub Actions, GitLab, Jenkins and Azure DevOps). `--bail` stops at the first failing flow.
+- Exit code `0` when everything passed, `1` when a step failed, `2` for a usage error or nothing to run.
+
+```yaml
+# .github/workflows/api.yml (excerpt)
+- run: printf '%s\n' "$ENV_MCP_LOCAL" > .env.mcp.local
+  env: { ENV_MCP_LOCAL: "${{ secrets.ENV_MCP_LOCAL }}" }
+- run: npx conversational-api-test-mcp run --env STAGING --reporter junit --out reports/api.xml
+```
 
 ## Keeping output small
 

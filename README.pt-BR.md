@@ -233,9 +233,8 @@ O agente chama `convert_legacy_to_canonical`, que responde:
 ```text
 outputPath: .mcp/api/shop.yaml
 source: postman
-losses[2]{code,message}:
-  POSTMAN_PRE_REQUEST_SCRIPTS,Events / pre-request scripts are not executed.
-  POSTMAN_TESTS,Post-run test scripts are not converted.
+losses[1]{code,message}:
+  POSTMAN_PRE_REQUEST_SCRIPTS,"Some pre-request script lines could not be translated and will not run. Requests: Create order."
 endpointCount: 2
 ```
 
@@ -246,6 +245,7 @@ service: Shop
 base_url: "{{base_url}}"
 variables:
   base_url: https://httpbin.org
+  rid: "{{$uuid}}"              # de pm.environment.set("rid", …{{$guid}}…)
 endpoints:
   - id: postman_0_List_orders
     method: GET
@@ -253,15 +253,25 @@ endpoints:
     description: List orders
     headers:
       X-Request-Id: "{{rid}}"
+    assert:                      # dos blocos pm.test
+      status: 200
+      maxDurationMs: 1000
+      checks:
+        - path: $.args.status
+          equals: open
   - id: postman_1_Create_order
     method: POST
     path: /anything/orders
     description: Create order
-    headers:
-      Content-Type: application/json
     body:
       item: notebook
       quantity: 2
+    headers:
+      Content-Type: application/json
+    assert:
+      status: 200
+    capture:                     # de pm.environment.set("orderItem", pm.response.json().json.item)
+      orderItem: $.json.item
 ```
 
 Cada request da collection, inclusive os de pastas, agora é um endpoint. A lista `losses` é o servidor dizendo o que ficou para trás, e a conversão pede alguns minutos de acabamento — peça ao agente, ele mostra uma prévia de cada mudança antes de escrever:
@@ -270,13 +280,14 @@ Cada request da collection, inclusive os de pastas, agora é um endpoint. A list
 |-----------------------------|------------------------|---------------|
 | O host em cada URL | Vira o `base_url`, tirado da variável da collection usada como host (`{{baseUrl}}/orders`) ou da primeira URL absoluta. Sem nenhuma das duas, o `base_url` fica vazio e `losses` traz `POSTMAN_BASE_URL_UNRESOLVED`. | Nada, quando foi encontrado. Senão, "define o `base_url` como `https://api.exemplo.com`", ou coloque `BASE_URL=...` no `.env.mcp.local` e use `{{BASE_URL}}`. |
 | A aba **Authorization** (collection, pasta ou request) | Convertida por request, seguindo a herança do Postman (`inherit`, `noauth`): Bearer e Basic viram `auth`, Digest vira `digest_auth`, API Key vira header ou param. Credenciais literais vão para o `.env.mcp.local`. Outros tipos (OAuth 2.0, AWS, …), e Basic montado com `{{variáveis}}`, aparecem como `POSTMAN_AUTH_UNSUPPORTED`. | Nada, para os convertidos. Para o resto, `auth: Bearer {{TOKEN}}`, mais `capture` + `auth_dependency` quando um request de login gera o token. |
-| Scripts de pre-request | Não são executados. Aparecem em `losses`, com uma dica quando o script gerava ids ou buscava token. | `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}` para valores gerados; `capture` + `auth_dependency` para tokens. |
-| Testes (`pm.test`) | Não são convertidos. Aparecem em `losses`. | `assert` no request ou em um passo de fluxo — veja [verificações de valor](#verificações-de-valor). |
+| Scripts de pre-request | Valores gerados viram variáveis: `uuid.v4()`, `crypto.randomUUID()` e `{{$guid}}` → `{{$uuid}}`, `Date.now()` → `{{$timestamp}}`, `new Date().toISOString()` → `{{$isoTimestamp}}`, literais como estão. Qualquer outra linha (assinaturas, `pm.sendRequest`, …) aparece em `losses`, com o nome dos requests. | `capture` + `auth_dependency` para tokens buscados por script; o resto à mão. |
+| Testes (`pm.test`) | Traduzidos para `assert`: `to.have.status`, `responseTime` abaixo de, e nos caminhos do corpo `eql`, `include`, `lengthOf`, `exist`, `above`/`below`, `match`. `pm.environment.set("x", jsonData.a.b)` vira `capture`. Scripts da collection e das pastas valem para todos os requests abaixo. O que sobra aparece em `losses`, com o nome dos requests. | `assert` à mão para o resto — veja [verificações de valor](#verificações-de-valor). |
+| Variáveis dinâmicas | `{{$guid}}` / `{{$randomUUID}}` viram `{{$uuid}}`; `{{$timestamp}}` (segundos no Postman) vira `{{$timestampSeconds}}`. | — |
 | Nomes dos requests | Viram ids como `postman_0_List_orders`. | "Renomeia para `list_orders`." |
 | Query string | Fica embutida no `path`; parâmetros desativados são descartados. | Funciona assim; mova para `params` se quiser variar. |
 | Corpos | `raw` vira `body`, `x-www-form-urlencoded` vira `form`, GraphQL vira um `body` `{ query, variables }`. `form-data` e arquivos binários não são mapeados e aparecem como `POSTMAN_BODY_MODE`, com o nome dos requests. | Reescreva esses como `form` ou `body`. |
 | Headers e params desativados | Ficam de fora, como o Postman faz no request. | — |
-| Environments do Postman | Não são importados. | Um bloco de chaves por ambiente no `.env.mcp.local`: `BASE_URL`, `STAGING_BASE_URL`, … |
+| Environments do Postman | Importados com `import_postman_environment` ("importa `staging.postman_environment.json` como STAGING"): cada valor ativo vai para o `.env.mcp.local` como `STAGING_<chave>`, usado quando `set_environment STAGING` está ativo. Chaves existentes são mantidas; os valores nunca voltam na resposta. | O Postman exporta só os valores iniciais: preencha os vazios que ele listar. |
 
 O arquivo da collection só é lido. Guarde, apague ou deixe fora do git — o YAML passa a ser a fonte da verdade.
 
@@ -304,6 +315,9 @@ Cada linha é algo que você faria na mão em um cliente de API.
 | "Transforma este cURL em um request" + o comando | Cria o request em um YAML; qualquer token que vier vai para o `.env.mcp.local`. | Import → Raw text |
 | "Roda o `forecast`" | Envia aquele request e resume a resposta. | Clicar em Send |
 | "Roda o fluxo smoke" | Executa os requests de um fluxo em ordem, parando na primeira falha. | Collection Runner |
+| — (no CI) `npx conversational-api-test-mcp run` | Roda todos os fluxos e grava um relatório JUnit; falha o job quando um passo falha. | Newman / Postman CLI |
+| "Importa `staging.postman_environment.json` como STAGING" | Copia os valores para o `.env.mcp.local` com o prefixo `STAGING_`. | Import → Environment |
+| "Confere se a resposta bate com o schema `Order` do `openapi.yaml`" | Valida o corpo contra esse schema. | `tv4` / `ajv` na aba Tests |
 | "Faz login e lista os pedidos" | Roda o login antes, guarda o token, usa, e refaz o login em um `401`. | Pre-request script |
 | "Cria um post e depois busca pelo id que voltou" | Captura um valor de uma resposta e usa no request seguinte. | `pm.environment.set` na aba Tests |
 | "Usa staging" | Troca o ambiente ativo para os próximos requests. | Seletor de environment |
@@ -336,6 +350,9 @@ Cada linha é algo que você faria na mão em um cliente de API.
 | `plan_vander_checks` / `run_vander_checks` | Revisão VANDER de um endpoint: checklist e, depois, execução automática — uma linha por verificação, com o eixo no prefixo do id. |
 | `import_curl` | Transforma um comando `curl` colado em um request dentro de um YAML. |
 | `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Importa Postman, OpenAPI ou Insomnia — de um arquivo ou de texto colado. |
+| `import_postman_environment` | Copia um environment exportado do Postman para o `.env.mcp.local`, opcionalmente com prefixo de ambiente. |
+
+Toda tool publica annotations do MCP: as que só leem dizem isso (o cliente pode rodá-las sem perguntar), e as que enviam HTTP ou substituem arquivos vêm marcadas como tal.
 
 Ordem recomendada: `list_api_definitions` → `summarize_api_definition` → `set_environment` (se preciso) → `execute_api_request` ou `execute_api_flow`.
 
@@ -371,7 +388,7 @@ VANDER parte da heurística VADER, de Stuart Ashman, e acrescenta um eixo Negati
 
 - Depois de `set_environment` (ex.: `STAGING`), `{{BASE_URL}}` resolve `STAGING_BASE_URL` primeiro e cai para `BASE_URL`.
 - Placeholders não resolvidos ficam literais (`{{CHAVE}}`) para o problema ficar visível.
-- Macros: `{{$uuid}}`, `{{$timestamp}}`, `{{$date}}`, `{{$date:YYYY-MM-DD HH:mm:ss}}`.
+- Macros: `{{$uuid}}`, `{{$timestamp}}` (ms), `{{$timestampSeconds}}`, `{{$isoTimestamp}}`, `{{$date}}`, `{{$date:YYYY-MM-DD HH:mm:ss}}`.
 - `{{env.NOME}}` lê o `process.env` do servidor, mas só para nomes listados em `MCP_API_ENV_PASSTHROUGH`.
 
 ### Requests
@@ -419,6 +436,16 @@ O `assert` (num request, num passo de fluxo ou pelo `assert_response`) aceita `s
 | `subsetOf` | Todo valor em `path` também aparece neste outro JSONPath — citações entre os documentos recuperados. |
 
 Um operador que o servidor não conhece é erro na leitura do YAML, nunca uma aprovação silenciosa.
+
+`schema` valida o corpo JSON inteiro contra um JSON Schema — escrito no próprio YAML, ou tirado de um arquivo do projeto com um JSON pointer, normalmente a sua spec OpenAPI:
+
+```yaml
+assert:
+  status: 200
+  schema: openapi.yaml#/components/schemas/Order   # ou inline: { type: object, required: [id] }
+```
+
+OpenAPI 3.0 e 3.1 funcionam (`nullable`, `$ref`s internos, `format`s). A falha diz o caminho e a regra, por exemplo `schema: /customer must have required property 'name'`. O arquivo é relido quando muda.
 
 ### Evals: endpoints cuja resposta varia
 
@@ -469,6 +496,26 @@ O que vale saber:
 - As execuções de um eval não capturam variáveis nem substituem a última resposta da sessão; o `auth_dependency` continua fazendo login quando preciso.
 - Uma resposta em streaming (`text/event-stream`) é dobrada em `{ text, eventCount, events }`: `$.text` é a resposta e `events` guarda o que não era pedaço de texto (fontes, uso, motivo de parada). Use `sse.textPath` no request quando o pedaço de texto estiver num lugar incomum.
 - [`examples/rag.example.yaml`](examples/rag.example.yaml) é um ponto de partida completo.
+
+## Rodando no CI
+
+O mesmo pacote roda seus fluxos no terminal, então o YAML que o agente usa também barra um pipeline:
+
+```bash
+npx conversational-api-test-mcp run --env STAGING --reporter junit --out reports/api.xml
+```
+
+- Sem arquivo, lê toda definição em `.mcp/api/` e roda cada um dos seus `flows` (um arquivo sem fluxos é pulado e listado). `--flow smoke` escolhe fluxos, `--request get_user` roda requests avulsos, e `--all-endpoints` roda todos os requests um a um — POST e DELETE inclusive.
+- `--env` funciona como o `set_environment`; os segredos vêm do `.env.mcp.local` ou, no CI, de um passo que o grava a partir do seu cofre de segredos.
+- `--reporter` é `pretty` (padrão), `json` ou `junit` (um testsuite por fluxo, um testcase por passo, lido por GitHub Actions, GitLab, Jenkins e Azure DevOps). `--bail` para no primeiro fluxo que falhar.
+- Código de saída `0` quando tudo passou, `1` quando um passo falhou, `2` para erro de uso ou nada para rodar.
+
+```yaml
+# .github/workflows/api.yml (trecho)
+- run: printf '%s\n' "$ENV_MCP_LOCAL" > .env.mcp.local
+  env: { ENV_MCP_LOCAL: "${{ secrets.ENV_MCP_LOCAL }}" }
+- run: npx conversational-api-test-mcp run --env STAGING --reporter junit --out reports/api.xml
+```
 
 ## Mantendo a saída pequena
 
