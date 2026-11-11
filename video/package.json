@@ -8,6 +8,7 @@
     "render": "remotion render src/index.ts Promo out/vander-linkedin.mp4",
     "cover": "remotion still src/index.ts Cover out/vander-linkedin-capa.png",
     "render:postman": "remotion render src/index.ts PostmanRun out/postman-run.mp4",
+    "cover:postman": "remotion still src/index.ts PostmanCover out/postman-run-capa.png",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
