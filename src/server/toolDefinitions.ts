@@ -79,6 +79,7 @@ import {
   checkContractDriftInputSchema,
 } from "../tools/checkContractDrift.js";
 import { inferCrudFlowsHandler, inferCrudFlowsInputSchema } from "../tools/inferCrudFlows.js";
+import { exportContractHandler, exportContractInputSchema } from "../tools/exportContract.js";
 import type { z } from "zod";
 
 /**
@@ -359,6 +360,15 @@ export function getAllToolDefinitions(): ToolDefinition[] {
         "Propose create → read → update → read → delete → read-again flows from the endpoints a definition already has (POST /things + GET/PUT/PATCH/DELETE /things/{{id}}). The final read must answer 404/410, catching deletes that do not delete. Captures the id from the create response. Sends nothing; `apply: true` writes the flows into the definition.",
       inputSchema: inferCrudFlowsInputSchema,
       handler: inferCrudFlowsHandler,
+    },
+    {
+      name: "export_contract",
+      title: "Export OpenAPI / Arazzo / Pact",
+      annotations: WRITES_FILES,
+      description:
+        "Write a definition out as another format under `.mcp/contracts/`: `openapi` (3.1, from the requests, linking assert.schema), `arazzo` (1.0 workflows from the flows, with captures as step outputs, plus the OpenAPI they reference) or `pact` (v3 draft consumer contract; response bodies from mock blocks, value snapshots or schema samples). Drafts to review. Refuses to replace a file unless `overwrite`.",
+      inputSchema: exportContractInputSchema,
+      handler: exportContractHandler,
     },
   ];
 }

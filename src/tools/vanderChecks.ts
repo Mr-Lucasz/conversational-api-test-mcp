@@ -24,10 +24,7 @@ import { omitNullish, safeTool, textResult } from "./toolResult.js";
 const axisSchema = z.enum(["V", "A", "N", "D", "E", "R"]);
 
 const baseShape = {
-  workspaceRoot: z
-    .string()
-    .optional()
-    .describe("Optional when MCP_WORKSPACE_ROOT is set."),
+  workspaceRoot: z.string().optional(),
   definitionRelativePath: z.string().describe("e.g. .mcp/api/default.yaml"),
   requestId: z.string(),
   axes: z
