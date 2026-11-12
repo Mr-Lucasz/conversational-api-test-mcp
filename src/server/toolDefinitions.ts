@@ -70,6 +70,10 @@ import {
   importPostmanEnvironmentHandler,
   importPostmanEnvironmentInputSchema,
 } from "../tools/importPostmanEnvironment.js";
+import {
+  mutateAssertionsHandler,
+  mutateAssertionsInputSchema,
+} from "../tools/mutateAssertions.js";
 import type { z } from "zod";
 
 /**
@@ -323,6 +327,15 @@ export function getAllToolDefinitions(): ToolDefinition[] {
         "Execute the automatic VANDER checks for one requestId. Returns one row per check (`id`, whose prefix is the axis; `result` pass/fail/skipped; `detail` with the evidence) and `failures` with expected/actual/body snippet. Probes vary method, credentials and body; they never capture variables or replace the session's last response. State-changing probes (any POST/PUT/PATCH/DELETE) are skipped unless `includeDestructive` is true — ask the user before enabling it. `maxDurationMs` is the budget for the Responsiveness check.",
       inputSchema: runVanderChecksInputSchema,
       handler: runVanderChecksHandler,
+    },
+    {
+      name: "mutate_assertions",
+      title: "Test the tests (mutation)",
+      annotations: SENDS_HTTP,
+      description:
+        "Mutation testing for asserts: runs a flow (or one request) once, then breaks each real response in realistic ways — a field disappears or changes type, a list comes back empty, status 500, 10x slower — and checks whether the endpoint and step asserts notice. Returns a score (killed / total) and the surviving mutations, each with an `addToAssert` that would catch it. `useLastResponse` with requestId mutates the session's last response and sends nothing.",
+      inputSchema: mutateAssertionsInputSchema,
+      handler: mutateAssertionsHandler,
     },
   ];
 }
