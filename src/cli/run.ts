@@ -92,7 +92,10 @@ async function runTarget(
         ok: Boolean(s.ok),
         status: typeof s.status === "number" ? s.status : undefined,
         durationMs: typeof s.durationMs === "number" ? s.durationMs : undefined,
-        failure: s.ok ? undefined : String(s.errorPreview ?? "step failed"),
+        failure: s.ok
+          ? undefined
+          : `${String(s.errorPreview ?? "step failed")}${s.traceId ? `
+trace ${String(s.traceId)}` : ""}`,
       })),
     };
   } catch (e) {
