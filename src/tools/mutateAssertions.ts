@@ -9,14 +9,14 @@ import { executeApiFlowInputSchema, runApiFlow } from "./executeApiFlow.js";
 import { safeTool, textResult } from "./toolResult.js";
 
 export const mutateAssertionsInputSchema = z.object({
-  workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
+  workspaceRoot: z.string().optional(),
   definitionRelativePath: z.string(),
-  flowName: z.string().optional().describe("Score every step of this flow."),
-  requestId: z.string().optional().describe("Score this request's assert."),
+  flowName: z.string().optional(),
+  requestId: z.string().optional(),
   useLastResponse: z
     .boolean()
     .optional()
-    .describe("With requestId: mutate the session's last response instead of sending the request."),
+    .describe("Mutate the session's last response; sends nothing."),
 });
 
 const MAX_SURVIVORS = 10;

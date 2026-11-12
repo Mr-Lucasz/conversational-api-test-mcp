@@ -23,6 +23,7 @@ const LEGACY_PATTERNS = [
   "**/openapi*.json",
   "**/insomnia*.json",
   "**/insomnia*.yaml",
+  "**/*.har",
 ];
 
 export type LegacyHit = {
@@ -34,6 +35,9 @@ function hintForPath(p: string): string {
   const lower = p.toLowerCase();
   if (lower.includes("swagger") || lower.includes("openapi")) {
     return "openapi";
+  }
+  if (lower.endsWith(".har")) {
+    return "har";
   }
   if (lower.includes("insomnia")) {
     return "insomnia";

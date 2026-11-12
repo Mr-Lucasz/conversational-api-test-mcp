@@ -19,15 +19,15 @@ import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
 import { safeTool, textResult } from "./toolResult.js";
 
 export const checkContractDriftInputSchema = z.object({
-  workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
+  workspaceRoot: z.string().optional(),
   definitionRelativePath: z.string(),
-  openapiRelativePath: z.string().describe("The OpenAPI / Swagger file the API claims to follow."),
-  requestIds: z.array(z.string()).optional().describe("Default: every request of the definition."),
+  openapiRelativePath: z.string().describe("OpenAPI / Swagger file in the workspace."),
+  requestIds: z.array(z.string()).optional().describe("Default: all."),
   includeDestructive: z
     .boolean()
     .optional()
     .default(false)
-    .describe("Also send POST/PUT/PATCH/DELETE requests. Ask the user first."),
+    .describe("Also send POST/PUT/PATCH/DELETE (ask first)."),
 });
 
 const MAX_UNCOVERED = 15;
