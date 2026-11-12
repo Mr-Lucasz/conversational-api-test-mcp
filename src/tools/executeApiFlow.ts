@@ -4,7 +4,7 @@ import { readApiDefinitionFile } from "../canonical/io.js";
 import { loadEnvMcpLocalParsed } from "../env/loadEnvMcpLocal.js";
 import { runEndpointWithDefinition, type ExecuteOutputOptions } from "../http/runEndpoint.js";
 import { redactJsonText } from "../http/redact.js";
-import { getLastResponse } from "../session/SessionStore.js";
+import { getLastResponse, type LastHttpResponse } from "../session/SessionStore.js";
 import { assertOnResponse } from "../assertion/assertResponse.js";
 import { safeResolveUnderWorkspace } from "../workspace/paths.js";
 import { resolveWorkspaceRoot } from "../workspace/resolveWorkspaceRoot.js";
@@ -149,8 +149,17 @@ export async function executeApiFlowHandler(
   return safeTool(() => runApiFlow(parsed.data));
 }
 
+export type FlowHooks = {
+  /** Called after each step with the response it got (undefined when no response came back). */
+  onStep?: (
+    step: FlowStep,
+    response: LastHttpResponse | undefined,
+    def: ApiDefinitionYaml,
+  ) => void;
+};
+
 /** Runs the steps and returns the flow result; throws on a bad definition or flow name. */
-export async function runApiFlow(input: ApiFlowInput) {
+export async function runApiFlow(input: ApiFlowInput, hooks: FlowHooks = {}) {
   const {
     workspaceRoot: workspaceRootArg,
     definitionRelativePath,
@@ -289,6 +298,12 @@ export async function runApiFlow(input: ApiFlowInput) {
         : last && !last.ok
           ? last.message
           : undefined);
+
+    hooks.onStep?.(
+      step,
+      last && (last.ok || last.status !== undefined) ? getLastResponse(workspaceRoot) : undefined,
+      def,
+    );
 
     stepResults.push({
       requestId,
