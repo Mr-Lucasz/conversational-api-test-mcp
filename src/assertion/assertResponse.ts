@@ -3,6 +3,7 @@ import type { AssertSpec, ValueCheck } from "../canonical/schema.js";
 import { maskIfSensitive } from "../http/redact.js";
 import { safeSliceString } from "../http/safeSlice.js";
 import { schemaFailures } from "./jsonSchema.js";
+import { snapshotFailures } from "./snapshot.js";
 import type { LastHttpResponse } from "../session/SessionStore.js";
 
 export type { AssertSpec } from "../canonical/schema.js";
@@ -170,6 +171,7 @@ export function collectAssertFailures(
   response: LastHttpResponse,
   spec: AssertSpec,
   workspaceRoot?: string,
+  options: { readOnlySnapshots?: boolean } = {},
 ): string[] {
   const out: string[] = [];
   if (spec.status !== undefined && response.status !== spec.status) {
@@ -185,6 +187,13 @@ export function collectAssertFailures(
     }
   }
 
+  if (spec.snapshot !== undefined) {
+    out.push(
+      ...snapshotFailures(response.bodyText, spec.snapshot, workspaceRoot, {
+        readOnly: options.readOnlySnapshots,
+      }),
+    );
+  }
   const needsBody =
     spec.jsonPathExists !== undefined || spec.checks?.length || spec.schema !== undefined;
   if (!needsBody) {

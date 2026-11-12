@@ -22,6 +22,7 @@ Options:
   --out <file>         Write the report to a file instead of stdout.
   --workspace <dir>    Project root holding .mcp/api/ (default: current directory).
   --bail               Stop at the first failing flow.
+  --update-snapshots   Rewrite assert snapshots that differ instead of failing.
   -h, --help           Show this help.`;
 
 export type RunCliIo = {
@@ -121,6 +122,7 @@ export async function runCli(argv: string[], io: RunCliIo = defaultIo): Promise<
         out: { type: "string" },
         workspace: { type: "string" },
         bail: { type: "boolean" },
+        "update-snapshots": { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -150,6 +152,9 @@ export async function runCli(argv: string[], io: RunCliIo = defaultIo): Promise<
     return 2;
   }
 
+  if (values["update-snapshots"]) {
+    process.env.MCP_UPDATE_SNAPSHOTS = "1";
+  }
   if (values.env) {
     setSessionVariable(workspaceRoot, "CURRENT_ENV", values.env.trim().toUpperCase());
   }
