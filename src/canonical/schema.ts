@@ -72,6 +72,9 @@ export const valueCheckSchema = z
 
 export type ValueCheck = z.infer<typeof valueCheckSchema>;
 
+/** Snapshot names become file names: keep them to a safe alphabet. */
+const SNAPSHOT_NAME = /^[A-Za-z0-9][\w.-]{0,80}$/;
+
 export const assertSpecSchema = z
   .object({
     status: z.number().int().optional(),
@@ -83,6 +86,23 @@ export const assertSpecSchema = z
      * optional JSON pointer — `openapi.yaml#/components/schemas/Order`.
      */
     schema: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).optional(),
+    /**
+     * Compare the body with the one recorded the first time, stored in
+     * `.mcp/snapshots/<name>.json`. `mode: shape` (default) compares keys and types,
+     * `values` the values too; ids, dates and tokens are masked; `ignore` lists JSONPaths.
+     */
+    snapshot: z
+      .union([
+        z.string().regex(SNAPSHOT_NAME),
+        z
+          .object({
+            name: z.string().regex(SNAPSHOT_NAME),
+            mode: z.enum(["shape", "values"]).optional(),
+            ignore: z.array(z.string()).optional(),
+          })
+          .strict(),
+      ])
+      .optional(),
   })
   .strict();
 
@@ -90,7 +110,7 @@ export type AssertSpec = z.infer<typeof assertSpecSchema>;
 
 /** One-line summary of the assert shape, for tool schemas that publish it shallowly. */
 export const ASSERT_HINT =
-  "{status, jsonPathExists, maxDurationMs, checks: [{path (JSONPath; omit = whole body), contains | containsAny | notContains | matches | equals | min | max | minLength | maxLength | includesAll | includesAny | subsetOf (another JSONPath), ignoreCase, minRatio}], schema (inline JSON Schema, or \"file.yaml#/components/schemas/X\" in the workspace)}";
+  "{status, jsonPathExists, maxDurationMs, checks: [{path (JSONPath; omit = whole body), contains | containsAny | notContains | matches | equals | min | max | minLength | maxLength | includesAll | includesAny | subsetOf (another JSONPath), ignoreCase, minRatio}], schema (inline JSON Schema, or \"file.yaml#/components/schemas/X\" in the workspace), snapshot (name | {name, mode: shape|values, ignore: [JSONPath]})}";
 
 export const endpointAssertSchema = assertSpecSchema.optional();
 
@@ -130,6 +150,18 @@ export const endpointSchema = z
      * inside each event, when the usual ones (OpenAI, Anthropic, …) do not apply.
      */
     sse: z.object({ textPath: z.string().optional() }).optional(),
+    /** JSON Schema of the request body (inline or `file#/pointer`): Vander derives negative probes from it. */
+    body_schema: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).optional(),
+    /** Roles (from the definition's `roles`) allowed to call this endpoint; the others are probed for BOLA. */
+    allow_roles: z.array(z.string()).optional(),
+    /** What the mock server answers for this endpoint. */
+    mock: z
+      .object({
+        status: z.number().int().optional(),
+        headers: z.record(z.string(), z.string()).optional(),
+        body: z.unknown().optional(),
+      })
+      .optional(),
   })
   .refine(
     (e) => !(e.body !== undefined && e.form !== undefined),
@@ -221,6 +253,13 @@ export const apiDefinitionYamlSchema = z.object({
   name: z.string().optional(),
   base_url: z.string().optional(),
   variables: z.record(z.string(), z.string()).optional(),
+  /**
+   * Other identities, as the `Authorization` value each one sends (`Bearer {{BOB_TOKEN}}`).
+   * Vander calls endpoints that address one object as each of them, expecting a refusal (BOLA).
+   */
+  roles: z.record(z.string(), z.string()).optional(),
+  /** Send a W3C `traceparent` header with every request and report its trace id. */
+  tracing: z.boolean().optional(),
   /**
    * Named, reusable chains. Run one with `execute_api_flow` + `flowName`.
    * Each step is an endpoint id or a full step object (retry / poll / assert).

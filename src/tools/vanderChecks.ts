@@ -97,7 +97,7 @@ function loadPlan(args: {
     throw new Error(`Unknown request id: ${args.requestId}`);
   }
   const wanted = args.axes ? new Set(args.axes) : null;
-  const checks = buildVanderPlan(def, ep).filter(
+  const checks = buildVanderPlan(def, ep, { workspaceRoot }).filter(
     (c) => !wanted || wanted.has(c.axis),
   );
   return { workspaceRoot, def, ep, checks };

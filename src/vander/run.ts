@@ -104,7 +104,7 @@ async function sendVariant(
   let headers = built.headers;
   let body = built.body;
 
-  if (variant.auth) {
+  if (variant.auth || variant.asRole) {
     headers = Object.fromEntries(
       Object.entries(headers).filter(
         ([k]) => k.toLowerCase() !== "authorization",
@@ -112,6 +112,28 @@ async function sendVariant(
     );
     if (variant.auth === "invalid") {
       headers.Authorization = "Bearer vander-invalid-token";
+    }
+    if (variant.asRole) {
+      const value = def.roles?.[variant.asRole];
+      if (value === undefined) {
+        return { error: `unknown role "${variant.asRole}"` };
+      }
+      const resolved = interpolateString(value, ctx);
+      if (/\{\{[^}]+\}\}/.test(resolved)) {
+        return { error: `role "${variant.asRole}": ${resolved.match(/\{\{[^}]+\}\}/)?.[0]} is not set` };
+      }
+      headers.Authorization = resolved;
+    }
+  }
+  if (variant.bodyPatch) {
+    const full = interpolateUnknown(ep.body ?? {}, ctx);
+    const base =
+      full !== null && typeof full === "object" && !Array.isArray(full)
+        ? (full as Record<string, unknown>)
+        : {};
+    body = JSON.stringify({ ...base, [variant.bodyPatch.key]: variant.bodyPatch.value });
+    if (!Object.keys(headers).some((h) => h.toLowerCase() === "content-type")) {
+      headers["Content-Type"] = "application/json";
     }
   }
   if (variant.dropBodyKey !== undefined) {
