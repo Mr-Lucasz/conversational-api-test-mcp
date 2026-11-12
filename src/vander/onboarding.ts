@@ -154,7 +154,7 @@ const EXPLAIN = [
 
 const USE_CASES = [
   "Things people ask for (Postman term → what to call here):",
-  '- "Here is my collection" (Import), pasted as JSON or as a file in the repo → `convert_legacy_to_canonical` with `legacyContent` (pasted text) or `legacyRelativePath` (file; find candidates with `discover_legacy_api_sources`). Works for Postman collections, OpenAPI/Swagger and Insomnia exports.',
+  '- "Here is my collection" (Import), pasted as JSON or as a file in the repo → `convert_legacy_to_canonical` with `legacyContent` (pasted text) or `legacyRelativePath` (file; find candidates with `discover_legacy_api_sources`). Works for Postman collections, OpenAPI/Swagger, Insomnia exports and HAR recordings (DevTools "Save all as HAR").',
   '- "Here is a cURL" (Import → Raw text) → `import_curl`: pick a short `requestId`, pass the command untouched.',
   '- "Send this request" (Send) → `execute_api_request` with a `requestId`.',
   '- "Run the collection" / "run the smoke tests" (Collection Runner) → `execute_api_flow` with a `flowName`, or inline `steps`.',
@@ -166,7 +166,10 @@ const USE_CASES = [
   '- "Show me what would be sent" (Console / code snippet) → `dry_run_request`.',
   '- "Add a request that does X" (New Request), described in words → `upsert_canonical_api_definition`, dry-run first, write only after the user agrees.',
   '- "Test my chatbot / RAG / search" (no Postman equivalent: the answer changes every time) → `run_eval` with cases, `repeat` and a pass rate; `judge` for what only a reader can grade.',
-  '- "Is this endpoint solid?" (no Postman equivalent) → `plan_vander_checks` and `run_vander_checks`.',
+  '- "Is this endpoint solid?" (no Postman equivalent) → `plan_vander_checks` and `run_vander_checks`; `roles` in the definition adds BOLA probes, `body_schema` adds boundary probes.',
+  '- "Are my tests any good?" (no Postman equivalent) → `mutate_assertions`: score, plus the asserts that are missing.',
+  '- "Does the API still match the OpenAPI?" → `check_contract_drift`; "tell me if the response changes" → `assert.snapshot`.',
+  '- "Create the CRUD flows" → `infer_crud_flows`; "export as Arazzo / Pact / OpenAPI" (Export) → `export_contract`; a mock API (Mock server) → `npx conversational-api-test-mcp mock` in a terminal.',
 ];
 
 const RETURNING = [
