@@ -1,4 +1,4 @@
-import type { LegacyParserStrategy } from "./LegacyParserStrategy.js";
+import type { LegacyParserStrategy, ParseOptions } from "./LegacyParserStrategy.js";
 import { PostmanParser } from "./PostmanParser.js";
 import { OpenApiParser } from "./OpenApiParser.js";
 import { InsomniaParser } from "./InsomniaParser.js";
@@ -22,7 +22,7 @@ export function getParserForRaw(
 
 export function parseLegacyToCanonical(
   raw: unknown,
-  options?: { serviceName?: string },
+  options?: ParseOptions,
 ): ReturnType<LegacyParserStrategy["parse"]> {
   const parser = getParserForRaw(raw);
   if (!parser) {

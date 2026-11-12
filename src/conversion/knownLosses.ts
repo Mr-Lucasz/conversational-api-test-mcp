@@ -7,7 +7,9 @@ export const KNOWN_LOSS_CODES = {
   POSTMAN_PRE_REQUEST_SCRIPTS:
     "Some pre-request script lines could not be translated and will not run.",
   POSTMAN_TESTS: "Some test script lines could not be translated to assert / capture.",
-  OAS_REF: "$ref expansion and rich requestBody schemas are limited in v1 import.",
+  OAS_BODY_EXAMPLE: "Request bodies with a schema but no example are left empty.",
+  OAS_NO_SCHEMA_LINK: "A pasted spec cannot be linked from assert.schema; convert from a file.",
+  HAR_AUTH: "Recorded credentials are replaced with placeholders, never copied.",
   OAS_SECURITY_SCHEMES: "Global security schemes are not auto-wired to each request.",
   INSOMNIA_GRPC: "Non-HTTP Insomnia resources are skipped.",
   APIDOG_NATIVE: "Use Apidog export as OpenAPI or Insomnia export.",
