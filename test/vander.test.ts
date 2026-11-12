@@ -245,7 +245,11 @@ describe("run_vander_checks", () => {
         .content[0].text,
     ) as Report;
     const checks = checksOf(full);
-    expect(full.summary.fail).toBe(0);
+    // This mock checks only that sku/quantity are present: the type / null / empty probes
+    // catch it accepting `quantity: "not-a-number"` and friends.
+    const failed = [...checks.values()].filter((c) => c.result === "fail").map((c) => c.id);
+    expect(failed.length).toBeGreaterThan(0);
+    expect(failed.every((id) => /^N-(type|null|empty)-/.test(id))).toBe(true);
     expect(checks.get("D-baseline")?.result).toBe("pass");
     expect(checks.get("N-drop-sku")?.result).toBe("pass");
     expect(checks.get("E-malformed-json")?.result).toBe("pass");

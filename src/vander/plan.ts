@@ -2,6 +2,7 @@ import type {
   ApiDefinitionYaml,
   EndpointDefinition,
 } from "../canonical/schema.js";
+import { buildNegativeProbes } from "./negatives.js";
 
 /**
  * VANDER — API testing heuristic used by the `vander` persona:
@@ -25,6 +26,10 @@ export type RequestVariant = {
   auth?: "none" | "invalid";
   dropBodyKey?: string;
   rawBody?: string;
+  /** Replace (or add) one top-level body field. */
+  bodyPatch?: { key: string; value: unknown };
+  /** Send the `Authorization` of this role from the definition's `roles`. */
+  asRole?: string;
 };
 
 export type StatusExpectation = number[] | "2xx" | "4xx" | "not5xx";
@@ -63,6 +68,8 @@ const ALL_METHODS: HttpMethod[] = [
   "DELETE",
 ];
 const REJECTED = [401, 403];
+/** Another user asking for an object that is not theirs: refused, or hidden as not found. */
+const NOT_YOURS = [401, 403, 404];
 const METHOD_NOT_ALLOWED = [405, 404, 501];
 const MAX_DROP_KEY_PROBES = 5;
 
@@ -90,10 +97,19 @@ function declaresAuth(ep: EndpointDefinition): boolean {
   );
 }
 
-/** Deterministic VANDER checklist for one endpoint, derived only from its definition. */
+/** The path names one object: a `{{placeholder}}`, an OpenAPI `{param}` or a numeric segment. */
+export function addressesOneObject(path: string): boolean {
+  return /\{\{[^}]+\}\}|\{[^}]+\}|\/\d+(\/|$)/.test(path);
+}
+
+/**
+ * Deterministic VANDER checklist for one endpoint, derived only from its definition
+ * (and its `body_schema`, read from the workspace when it is a file reference).
+ */
 export function buildVanderPlan(
   def: ApiDefinitionYaml,
   ep: EndpointDefinition,
+  opts: { workspaceRoot?: string } = {},
 ): VanderCheck[] {
   const unsafe = !isSafeMethod(ep.method);
   const checks: VanderCheck[] = [];
@@ -147,7 +163,30 @@ export function buildVanderPlan(
         destructive: unsafe,
       },
     );
-    manual("A", 1, "Token of another user / lower scope gets 403, not data");
+    const others = Object.keys(def.roles ?? {}).filter(
+      (r) => !(ep.allow_roles ?? []).includes(r) && def.roles?.[r] !== ep.auth,
+    );
+    if (others.length && addressesOneObject(ep.path)) {
+      for (const role of others) {
+        checks.push({
+          id: `A-role-${role}`,
+          axis: "A",
+          title: `As "${role}", this object is refused or hidden (BOLA)`,
+          kind: "request",
+          variant: { asRole: role },
+          expect: NOT_YOURS,
+          destructive: unsafe,
+        });
+      }
+    } else {
+      manual(
+        "A",
+        1,
+        def.roles
+          ? "Token of another user / lower scope gets 403, not data"
+          : "Token of another user / lower scope gets 403, not data (declare `roles` to automate)",
+      );
+    }
     manual("A", 2, "Expired token gets 401");
   } else if (ep.digest_auth) {
     manual("A", 1, "Wrong digest password is rejected with 401");
@@ -170,8 +209,23 @@ export function buildVanderPlan(
         destructive: unsafe,
       });
     }
-    manual("N", 1, "Wrong types, nulls, empty strings and boundary values per field");
-    manual("N", 2, "Unknown extra field is ignored or rejected, never stored blindly");
+  }
+  const negatives = buildNegativeProbes(ep, opts.workspaceRoot);
+  for (const p of negatives.probes) {
+    checks.push({
+      id: p.id,
+      axis: "N",
+      title: p.title,
+      kind: "request",
+      variant: { bodyPatch: { key: p.key, value: p.value } },
+      expect: p.expect,
+      destructive: unsafe,
+    });
+  }
+  if (negatives.schemaError) {
+    manual("N", 1, `body_schema could not be read (${negatives.schemaError}); check boundaries by hand`);
+  } else if (body && !ep.body_schema) {
+    manual("N", 1, "Boundary values per field (declare `body_schema` to automate min/max/enum/format)");
   }
   if (ep.form) {
     manual("N", 3, "Form with a missing / empty required field is rejected");
@@ -179,7 +233,7 @@ export function buildVanderPlan(
   if (ep.params) {
     manual("N", 4, "Invalid, missing and out-of-range query parameters");
   }
-  if (/\{\{[^}]+\}\}|\/\d+(\/|$)/.test(ep.path)) {
+  if (addressesOneObject(ep.path)) {
     manual("N", 5, "Non-existent id in the path returns 404; malformed id returns 400/404");
   }
 

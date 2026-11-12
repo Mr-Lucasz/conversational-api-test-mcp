@@ -164,3 +164,59 @@ export function schemaFailures(
   }
   return shown;
 }
+
+/** Follows `#/a/b` inside `doc`; undefined when the pointer leads nowhere. */
+function atPointer(doc: unknown, pointer: string): unknown {
+  if (!pointer || pointer === "/") {
+    return doc;
+  }
+  let node = doc;
+  for (const raw of pointer.replace(/^\//, "").split("/")) {
+    const key = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~");
+    if (node === null || typeof node !== "object") {
+      return undefined;
+    }
+    node = (node as Record<string, unknown>)[key];
+  }
+  return node;
+}
+
+/**
+ * The schema as a plain object, to read its keywords (properties, minLength…) rather than
+ * validate with it. A reference loads its file; a local `$ref` on the node or on a property
+ * is followed once, which covers the usual `components/schemas` layout.
+ */
+export function loadSchemaObject(
+  schema: string | object,
+  workspaceRoot: string | undefined,
+): Record<string, unknown> | undefined {
+  let doc: unknown = schema;
+  let node: unknown;
+  if (typeof schema === "string") {
+    if (!workspaceRoot) {
+      return undefined;
+    }
+    const { file, pointer } = resolveSchemaRef(schema, workspaceRoot);
+    doc = loadDocument(file);
+    node = atPointer(doc, pointer);
+  } else {
+    doc = normalizeNullable(schema);
+    node = doc;
+  }
+  const deref = (n: unknown): unknown => {
+    const ref = (n as { $ref?: unknown } | null)?.$ref;
+    return typeof ref === "string" && ref.startsWith("#") ? atPointer(doc, ref.slice(1)) : n;
+  };
+  const root = deref(node);
+  if (root === null || typeof root !== "object") {
+    return undefined;
+  }
+  const out = { ...(root as Record<string, unknown>) };
+  const props = out.properties;
+  if (props && typeof props === "object") {
+    out.properties = Object.fromEntries(
+      Object.entries(props as Record<string, unknown>).map(([k, v]) => [k, deref(v)]),
+    );
+  }
+  return out;
+}
