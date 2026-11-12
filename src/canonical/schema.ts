@@ -110,7 +110,7 @@ export type AssertSpec = z.infer<typeof assertSpecSchema>;
 
 /** One-line summary of the assert shape, for tool schemas that publish it shallowly. */
 export const ASSERT_HINT =
-  "{status, jsonPathExists, maxDurationMs, checks: [{path (JSONPath; omit = whole body), contains | containsAny | notContains | matches | equals | min | max | minLength | maxLength | includesAll | includesAny | subsetOf (another JSONPath), ignoreCase, minRatio}], schema (inline JSON Schema, or \"file.yaml#/components/schemas/X\" in the workspace), snapshot (name | {name, mode, ignore})}";
+  "{status, jsonPathExists, maxDurationMs, checks: [{path (JSONPath; omit = whole body), contains | containsAny | notContains | matches | equals | min | max | minLength | maxLength | includesAll | includesAny | subsetOf (another JSONPath), ignoreCase, minRatio}], schema (inline JSON Schema or \"file.yaml#/pointer\"), snapshot (name | {name, mode, ignore})}";
 
 export const endpointAssertSchema = assertSpecSchema.optional();
 
@@ -258,8 +258,12 @@ export const apiDefinitionYamlSchema = z.object({
    * Vander calls endpoints that address one object as each of them, expecting a refusal (BOLA).
    */
   roles: z.record(z.string(), z.string()).optional(),
-  /** Send a W3C `traceparent` header with every request and report its trace id. */
-  tracing: z.boolean().optional(),
+  /**
+   * Send a W3C `traceparent` header with every request and report its trace id, to find
+   * the request in the APM (New Relic, Datadog, Jaeger…). `url` is a link template with
+   * `{traceId}`, e.g. your APM's trace view.
+   */
+  tracing: z.union([z.boolean(), z.object({ url: z.string().min(1) }).strict()]).optional(),
   /**
    * Named, reusable chains. Run one with `execute_api_flow` + `flowName`.
    * Each step is an endpoint id or a full step object (retry / poll / assert).

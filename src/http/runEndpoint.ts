@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readApiDefinitionFile } from "../canonical/io.js";
 import type {
   ApiDefinitionYaml,
@@ -201,6 +202,7 @@ async function performHttpOnce(input: {
   const { url } = urlResult;
 
   const { headers, body } = buildEndpointHeadersAndBody(ep, ctx);
+  const trace = def.tracing ? startTrace(headers, def.tracing) : undefined;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -248,7 +250,7 @@ async function performHttpOnce(input: {
   clearTimeout(timer);
   const durationMs = Date.now() - started;
 
-  return completeSuccessfulExecution({
+  const result = await completeSuccessfulExecution({
     workspaceRoot,
     url,
     durationMs,
@@ -258,6 +260,26 @@ async function performHttpOnce(input: {
     outputOptions,
     runOptions,
   });
+  return trace ? { ...result, ...trace } : result;
+}
+
+/**
+ * Adds a W3C `traceparent` (sampled) unless the endpoint sets one, and returns the trace id
+ * so the caller can look the request up in the APM.
+ */
+function startTrace(
+  headers: Record<string, string>,
+  tracing: NonNullable<ApiDefinitionYaml["tracing"]>,
+): { traceId: string; traceUrl?: string } {
+  const existing = Object.entries(headers).find(([k]) => k.toLowerCase() === "traceparent")?.[1];
+  const fromHeader = existing && /^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$/.exec(existing)?.[1];
+  const traceId = fromHeader || randomBytes(16).toString("hex");
+  if (!fromHeader) {
+    headers.traceparent = `00-${traceId}-${randomBytes(8).toString("hex")}-01`;
+  }
+  return typeof tracing === "object"
+    ? { traceId, traceUrl: tracing.url.replaceAll("{traceId}", traceId) }
+    : { traceId };
 }
 
 /**

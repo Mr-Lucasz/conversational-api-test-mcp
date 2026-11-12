@@ -18,7 +18,7 @@ import {
 } from "../canonical/schema.js";
 
 const flowShape = {
-  workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
+  workspaceRoot: z.string().optional(),
   definitionRelativePath: z.string(),
   steps: z
     .array(flowStepSchema)
@@ -188,6 +188,7 @@ export async function runApiFlow(input: ApiFlowInput, hooks: FlowHooks = {}) {
     captureErrors: string[];
     errorPreview?: string;
     body?: unknown;
+    traceId?: string;
   }> = [];
 
   let okOverall = true;
@@ -316,6 +317,8 @@ export async function runApiFlow(input: ApiFlowInput, hooks: FlowHooks = {}) {
       errorPreview: lastOk ? undefined : summaryErrorPreview,
       // Num step que falhou o corpo já está em `errorPreview`.
       body: lastOk && wantsBody ? stepBody : undefined,
+      // The trace id is how a failed step is found in the APM.
+      traceId: last?.traceId,
     });
 
     if (!lastOk && !optional) {

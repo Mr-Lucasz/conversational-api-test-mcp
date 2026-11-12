@@ -16,10 +16,15 @@ export type ExecuteResult =
       captureApplied?: Record<string, string>;
       /** Omitido quando não há erros de capture. */
       captureErrors?: string[];
+      /** W3C trace id sent in `traceparent` (definition `tracing`). */
+      traceId?: string;
+      traceUrl?: string;
     }
   | {
       ok: false;
       message: string;
       /** HTTP status when a response was received but the endpoint `assert` failed. */
       status?: number;
+      traceId?: string;
+      traceUrl?: string;
     };
