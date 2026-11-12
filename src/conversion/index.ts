@@ -3,3 +3,4 @@ export * from "./ParserFactory.js";
 export * from "./PostmanParser.js";
 export * from "./OpenApiParser.js";
 export * from "./InsomniaParser.js";
+export * from "./HarParser.js";

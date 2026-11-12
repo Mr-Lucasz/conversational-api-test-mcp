@@ -78,6 +78,7 @@ import {
   checkContractDriftHandler,
   checkContractDriftInputSchema,
 } from "../tools/checkContractDrift.js";
+import { inferCrudFlowsHandler, inferCrudFlowsInputSchema } from "../tools/inferCrudFlows.js";
 import type { z } from "zod";
 
 /**
@@ -174,19 +175,19 @@ export function getAllToolDefinitions(): ToolDefinition[] {
     },
     {
       name: "discover_legacy_api_sources",
-      title: "Find Postman / OpenAPI / Insomnia files",
+      title: "Find Postman / OpenAPI / Insomnia / HAR files",
       annotations: READ_ONLY,
       description:
-        "Find Postman collections, OpenAPI/Swagger, or Insomnia exports.",
+        "Find Postman collections, OpenAPI/Swagger, Insomnia exports or HAR recordings.",
       inputSchema: discoverLegacySourcesInputSchema,
       handler: discoverLegacySourcesHandler,
     },
     {
       name: "convert_legacy_to_canonical",
-      title: "Convert Postman / OpenAPI / Insomnia",
+      title: "Convert Postman / OpenAPI / Insomnia / HAR",
       annotations: REPLACES_FILES,
       description:
-        "Turn a Postman collection, an OpenAPI/Swagger spec or an Insomnia export into a YAML definition under `.mcp/api/`. Give `legacyRelativePath` for a file in the workspace, or `legacyContent` with the JSON/YAML text the user pasted. Literal credentials found in headers or auth are moved to `.env.mcp.local` and replaced by `{{VARIABLE}}`. Refuses to replace an existing file unless `overwrite` is true. Apidog: export as OpenAPI or Postman first.",
+        "Turn a Postman collection, an OpenAPI/Swagger spec (from a file: responses get `assert.schema` into it), an Insomnia export or a HAR recording (DevTools \"Save all as HAR\": endpoints plus a `recorded` flow) into a YAML definition under `.mcp/api/`. Give `legacyRelativePath` for a file in the workspace, or `legacyContent` with the JSON/YAML text the user pasted. Literal credentials found in headers or auth are moved to `.env.mcp.local` and replaced by `{{VARIABLE}}`. Refuses to replace an existing file unless `overwrite` is true. Apidog: export as OpenAPI or Postman first.",
       inputSchema: convertLegacyToCanonicalInputSchema,
       handler: convertLegacyToCanonicalHandler,
     },
@@ -349,6 +350,15 @@ export function getAllToolDefinitions(): ToolDefinition[] {
         "Compare what the API really returns with its OpenAPI / Swagger file: sends each request of a definition (GET/HEAD/OPTIONS only unless includeDestructive) and validates status and body against the operation's documented response. Rows: ok, drift (undocumented status, body breaking the schema), not-in-spec, skipped. Also lists spec operations no request covers.",
       inputSchema: checkContractDriftInputSchema,
       handler: checkContractDriftHandler,
+    },
+    {
+      name: "infer_crud_flows",
+      title: "Infer CRUD flows",
+      annotations: REPLACES_FILES,
+      description:
+        "Propose create → read → update → read → delete → read-again flows from the endpoints a definition already has (POST /things + GET/PUT/PATCH/DELETE /things/{{id}}). The final read must answer 404/410, catching deletes that do not delete. Captures the id from the create response. Sends nothing; `apply: true` writes the flows into the definition.",
+      inputSchema: inferCrudFlowsInputSchema,
+      handler: inferCrudFlowsHandler,
     },
   ];
 }
