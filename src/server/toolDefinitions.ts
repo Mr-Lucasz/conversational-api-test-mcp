@@ -74,6 +74,10 @@ import {
   mutateAssertionsHandler,
   mutateAssertionsInputSchema,
 } from "../tools/mutateAssertions.js";
+import {
+  checkContractDriftHandler,
+  checkContractDriftInputSchema,
+} from "../tools/checkContractDrift.js";
 import type { z } from "zod";
 
 /**
@@ -336,6 +340,15 @@ export function getAllToolDefinitions(): ToolDefinition[] {
         "Mutation testing for asserts: runs a flow (or one request) once, then breaks each real response in realistic ways — a field disappears or changes type, a list comes back empty, status 500, 10x slower — and checks whether the endpoint and step asserts notice. Returns a score (killed / total) and the surviving mutations, each with an `addToAssert` that would catch it. `useLastResponse` with requestId mutates the session's last response and sends nothing.",
       inputSchema: mutateAssertionsInputSchema,
       handler: mutateAssertionsHandler,
+    },
+    {
+      name: "check_contract_drift",
+      title: "Check contract drift",
+      annotations: SENDS_HTTP,
+      description:
+        "Compare what the API really returns with its OpenAPI / Swagger file: sends each request of a definition (GET/HEAD/OPTIONS only unless includeDestructive) and validates status and body against the operation's documented response. Rows: ok, drift (undocumented status, body breaking the schema), not-in-spec, skipped. Also lists spec operations no request covers.",
+      inputSchema: checkContractDriftInputSchema,
+      handler: checkContractDriftHandler,
     },
   ];
 }

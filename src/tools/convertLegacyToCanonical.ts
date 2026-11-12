@@ -117,6 +117,7 @@ export async function convertLegacyToCanonicalHandler(
         );
     const result = parseLegacyToCanonical(parseText(raw), {
       serviceName: parsed.data.serviceName,
+      sourceRelativePath: legacyRelativePath?.replaceAll("\\", "/"),
     });
     const stored = storeSecrets(root, liftLiteralSecrets(result.canonical));
     writeApiDefinitionFileAtomic(outAbs, result.canonical);

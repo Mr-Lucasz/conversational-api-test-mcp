@@ -11,8 +11,14 @@ export type ParseResult = {
   sourceLabel: string;
 };
 
+export type ParseOptions = {
+  serviceName?: string;
+  /** Where the source file sits in the workspace, so the definition can point back into it. */
+  sourceRelativePath?: string;
+};
+
 export interface LegacyParserStrategy {
   readonly id: string;
   canHandle(raw: unknown): boolean;
-  parse(raw: unknown, options?: { serviceName?: string }): ParseResult;
+  parse(raw: unknown, options?: ParseOptions): ParseResult;
 }
