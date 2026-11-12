@@ -291,7 +291,7 @@ Cada request da collection, inclusive os de pastas, agora é um endpoint. A list
 
 O arquivo da collection só é lido. Guarde, apague ou deixe fora do git — o YAML passa a ser a fonte da verdade.
 
-Quando você pede ao agente para procurar o que importar sem citar um arquivo, o `discover_legacy_api_sources` busca no projeto por `*postman*.json`, `collection*.json`, `openapi*.{yaml,yml,json}`, `swagger*.{yaml,yml}` e `insomnia*.{json,yaml}`. Um arquivo com outro nome é convertido quando você passa o caminho.
+Quando você pede ao agente para procurar o que importar sem citar um arquivo, o `discover_legacy_api_sources` busca no projeto por `*postman*.json`, `collection*.json`, `openapi*.{yaml,yml,json}`, `swagger*.{yaml,yml}` `insomnia*.{json,yaml}` e `*.har`. Um arquivo com outro nome é convertido quando você passa o caminho.
 
 ### Um dia de trabalho, em prompts
 
@@ -311,7 +311,7 @@ Cada linha é algo que você faria na mão em um cliente de API.
 
 | Você diz | O que acontece | No Postman você faria |
 |----------|----------------|------------------------|
-| "Aqui está minha collection do Postman" + o JSON, ou o caminho do arquivo | Converte uma collection, uma spec OpenAPI ou um export do Insomnia para YAML. | Import |
+| "Aqui está minha collection do Postman" + o JSON, ou o caminho do arquivo | Converte uma collection, uma spec OpenAPI, um export do Insomnia ou uma gravação HAR para YAML. | Import |
 | "Transforma este cURL em um request" + o comando | Cria o request em um YAML; qualquer token que vier vai para o `.env.mcp.local`. | Import → Raw text |
 | "Roda o `forecast`" | Envia aquele request e resume a resposta. | Clicar em Send |
 | "Roda o fluxo smoke" | Executa os requests de um fluxo em ordem, parando na primeira falha. | Collection Runner |
@@ -327,6 +327,14 @@ Cada linha é algo que você faria na mão em um cliente de API.
 | "Adiciona um request que cria um pedido com estes campos" | Escreve uma nova entrada no YAML, mostrando uma prévia antes. | New request |
 | "Rode o eval smoke do assistente" | Envia cada pergunta várias vezes e aprova pela taxa de acerto; confere respostas, citações e latência por código. | — |
 | "Vander, o `forecast` está sólido?" | Revisa o endpoint em seis eixos e relata as evidências. | — |
+| "O Bob consegue ler o pedido da Alice?" | Chama o endpoint com o token de cada outro perfil, esperando 401/403/404 (BOLA). | — |
+| "Os asserts do fluxo smoke prestam?" | Quebra cada resposta real de jeitos pequenos e mostra quais regressões nenhum assert perceberia. | — |
+| "A API ainda bate com o `openapi.yaml`?" | Envia as requisições e valida status e body contra a spec. | — |
+| "Me avisa se o formato da resposta mudar" | Grava um snapshot na primeira execução e aponta o drift nas seguintes. | Comparar no olho |
+| "Cria os fluxos de CRUD de pedidos" | Escreve fluxos criar → ler → atualizar → apagar → ler de novo a partir dos endpoints que você já tem. | — |
+| "Converte o `checkout.har`" | Transforma uma gravação do navegador em requisições e num fluxo `recorded`, sem copiar as credenciais. | Interceptor / Capture |
+| — (terminal) `npx conversational-api-test-mcp mock` | Serve as definições como uma API mock. | Mock server |
+| "Exporta os fluxos como Arazzo" · "rascunha um contrato Pact" | Escreve OpenAPI 3.1, Arazzo 1.0 ou Pact v3 em `.mcp/contracts/`. | Export |
 
 ## Tools
 
@@ -349,8 +357,12 @@ Cada linha é algo que você faria na mão em um cliente de API.
 | `summon_vander` | Entrega ao agente a persona Vander quando você o chama pelo nome. |
 | `plan_vander_checks` / `run_vander_checks` | Revisão VANDER de um endpoint: checklist e, depois, execução automática — uma linha por verificação, com o eixo no prefixo do id. |
 | `import_curl` | Transforma um comando `curl` colado em um request dentro de um YAML. |
-| `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Importa Postman, OpenAPI ou Insomnia — de um arquivo ou de texto colado. |
+| `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Importa Postman, OpenAPI, Insomnia ou HAR — de um arquivo ou de texto colado. |
 | `import_postman_environment` | Copia um environment exportado do Postman para o `.env.mcp.local`, opcionalmente com prefixo de ambiente. |
+| `mutate_assertions` | Teste de mutação dos asserts: dá uma nota aos asserts de um fluxo e mostra os que estão faltando. |
+| `check_contract_drift` | Compara as respostas reais com um arquivo OpenAPI / Swagger. |
+| `infer_crud_flows` | Propõe (ou escreve) fluxos de CRUD que terminam conferindo que o delete apagou mesmo. |
+| `export_contract` | Escreve uma definição como OpenAPI 3.1, Arazzo 1.0 ou um rascunho de Pact v3. |
 
 Toda tool publica annotations do MCP: as que só leem dizem isso (o cliente pode rodá-las sem perguntar), e as que enviam HTTP ou substituem arquivos vêm marcadas como tal.
 
@@ -363,13 +375,34 @@ O **Vander** é uma persona entregue como prompt MCP: um QA sênior de APIs com 
 | Eixo | Pergunta | Verificado automaticamente |
 |------|----------|----------------------------|
 | **V**erbs | O que o caminho faz com métodos que não declara? | Métodos não declarados são rejeitados (405/404/501); `OPTIONS` não dá erro. |
-| **A**uthorization | Quem pode chamar? | Sem credencial e com token inválido é rejeitado (401/403). |
-| **N**egative | O que acontece com entrada ruim? | Cada campo de primeiro nível do body, removido um por vez, é rejeitado (4xx). |
+| **A**uthorization | Quem pode chamar? | Sem credencial e com token inválido é rejeitado (401/403). Com `roles`, outro usuário pedindo este objeto é recusado ou recebe 404 (BOLA). |
+| **N**egative | O que acontece com entrada ruim? | Cada campo do body removido, com tipo errado, `null` ou vazio é rejeitado (4xx); um campo extra desconhecido não causa 5xx. Com `body_schema`, valores além de `minLength`/`maxLength`/`minimum`/`maximum`, fora do `enum` ou com `format` inválido também são rejeitados. |
 | **D**ata | A resposta diz o que deveria? | O request base funciona, o `Content-Type` bate com o corpo, os JSONPaths capturados existem. |
 | **E**rrors | Falha bem? | JSON malformado é erro de cliente; nenhuma sonda causa 5xx nem vaza stack trace. |
 | **R**esponsiveness | É rápido o bastante? | O request base responde dentro de `maxDurationMs` (padrão 1000). |
 
-Cada eixo também traz ideias `manual` (token de outro usuário, valores de limite, idempotência, rate limiting…) que o Vander explora com as tools normais.
+Cada eixo também traz ideias `manual` (token expirado, idempotência, rate limiting…) que o Vander explora com as tools normais.
+
+Duas declarações transformam ideias manuais em verificações automáticas:
+
+```yaml
+roles:                       # outras identidades, pelo Authorization que cada uma envia
+  bob: Bearer {{BOB_TOKEN}}
+  support: Bearer {{SUPPORT_TOKEN}}
+endpoints:
+  - id: get_order
+    method: GET
+    path: /orders/{{order_id}}
+    auth: Bearer {{ALICE_TOKEN}}   # a dona
+    allow_roles: [support]          # o suporte pode ler: não é testado
+  - id: create_user
+    method: POST
+    path: /users
+    body: { name: Ana, age: 30 }
+    body_schema: openapi.yaml#/components/schemas/NewUser   # ou inline
+```
+
+`A-role-bob` chama o `get_order` com o token do Bob e falha se o pedido vier: autorização quebrada no nível do objeto (BOLA), o primeiro item do OWASP API Security Top 10. Só são testados endpoints que apontam para um objeto (um `{{placeholder}}` ou um id numérico no caminho), porque se espera que uma lista responda a qualquer usuário. O `body_schema` alimenta as sondas de limite, enum e formato; um import de OpenAPI preenche isso para você.
 
 Em clientes sem suporte a prompts — ou quando você preferir só conversar — chame pelo nome: "oi Vander, revisa o `whoami`". As instruções do servidor mandam o agente chamar `summon_vander`, que entrega o mesmo roteiro.
 
@@ -402,6 +435,11 @@ VANDER parte da heurística VADER, de Stuart Ashman, e acrescenta um eixo Negati
 - `auth: Bearer {{TOKEN}}` define o header `Authorization`.
 - `auth_dependency: <id do endpoint>` roda aquele endpoint antes quando faltam as variáveis que ele captura, e de novo após um `401` (desligue com `auth_retry_on_401: false`).
 - `digest_auth: { username, password }` faz HTTP Digest.
+- `roles` (no topo do arquivo) e `allow_roles` (num endpoint) guiam as verificações de BOLA — veja [Vander](#vander).
+
+### Tracing
+
+`tracing: true` no topo de uma definição envia um header W3C `traceparent` em cada requisição e devolve o `traceId` (em cada passo de fluxo, e junto das falhas nos relatórios de CI), para achar uma chamada que falhou no New Relic, Datadog, Jaeger ou qualquer backend OpenTelemetry. `tracing: { url: "https://seu-apm/trace/{traceId}" }` também devolve um link. Um endpoint que define o próprio `traceparent` mantém o dele.
 
 ### Fluxos
 
@@ -445,7 +483,17 @@ assert:
   schema: openapi.yaml#/components/schemas/Order   # ou inline: { type: object, required: [id] }
 ```
 
-OpenAPI 3.0 e 3.1 funcionam (`nullable`, `$ref`s internos, `format`s). A falha diz o caminho e a regra, por exemplo `schema: /customer must have required property 'name'`. O arquivo é relido quando muda.
+OpenAPI 3.0 e 3.1 funcionam (`nullable`, `$ref`s internos, `format`s). A falha diz o caminho e a regra, por exemplo `schema: /customer must have required property 'name'`. O arquivo é relido quando muda. Converter um arquivo OpenAPI (em vez de colar o texto) já escreve esse `schema` em todos os endpoints.
+
+`snapshot` compara o body com o que foi gravado na primeira execução, guardado em `.mcp/snapshots/<nome>.json` (faça commit dele):
+
+```yaml
+assert:
+  snapshot: order                      # shape: chaves e tipos dos valores
+  # snapshot: { name: order, mode: values, ignore: [$.requestId] }
+```
+
+`shape` (o padrão) pega drift de contrato (um campo que sumiu, mudou de tipo ou apareceu) sem quebrar com dados que mudam todo dia. `values` compara também os valores, mascarando UUIDs, datas, JWTs e ids hexadecimais longos; `ignore` descarta JSONPaths. Uma falha aparece como `snapshot order: $.total: "<number>" → "<string>"`. Para aceitar uma mudança de propósito, rode com `--update-snapshots` (ou `MCP_UPDATE_SNAPSHOTS=1`).
 
 ### Evals: endpoints cuja resposta varia
 
@@ -497,6 +545,53 @@ O que vale saber:
 - Uma resposta em streaming (`text/event-stream`) é dobrada em `{ text, eventCount, events }`: `$.text` é a resposta e `events` guarda o que não era pedaço de texto (fontes, uso, motivo de parada). Use `sse.textPath` no request quando o pedaço de texto estiver num lugar incomum.
 - [`examples/rag.example.yaml`](examples/rag.example.yaml) é um ponto de partida completo.
 
+## Testando os testes
+
+Uma suíte verde diz que os asserts passaram, não que pegariam alguma coisa. O `mutate_assertions` roda um fluxo (ou uma requisição) uma vez e depois quebra cada resposta real de jeitos realistas, rodando os asserts de novo em cada cópia: um campo some, muda de tipo ou vira `null`, uma lista volta vazia, um valor muda, o status vira 500 ou 404, a resposta fica dez vezes mais lenta. Nada a mais é enviado à API.
+
+Para uma requisição cujo único assert é `{ status: 200, jsonPathExists: $.id }`, contra um pedido mockado (trecho da saída real):
+
+```text
+score: 0.17
+killed: 5
+total: 30
+steps[1]{requestId,score,killed,total,note}:
+  get_order,0.17,5,30,""
+survivors[10]{step,change,addToAssert}:
+  get_order,took 1200ms instead of 20ms,"{\"maxDurationMs\":200}"
+  get_order,$.status disappeared,"{\"jsonPathExists\":\"$.status\"}"
+  get_order,$.items changed type (array → object),"{\"schema\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\"}}}}"
+  …
+moreSurvivors: 15
+```
+
+Cada mutação sobrevivente é uma regressão que a suíte deixaria passar, junto com um assert que a pegaria. Fique com os que olham campos estáveis; ids e timestamps mudam entre execuções. `useLastResponse: true` avalia a última resposta da sessão sem enviar nada. Durante as mutações os snapshots são só lidos, nunca regravados.
+
+## Contratos: drift, mocks e exports
+
+**Drift.** O `check_contract_drift` envia as requisições de uma definição (só as de leitura, a menos que `includeDestructive`) e confere cada resposta contra a operação que o arquivo OpenAPI / Swagger documenta: um status não documentado, ou um body que quebra o schema da resposta, é drift. Ele também lista as operações da spec que nenhuma requisição cobre. A correspondência é por método e caminho, com `{{placeholders}}` ou ids reais, com ou sem o base path do servidor.
+
+**Imports que mantêm o vínculo.** Converter um arquivo OpenAPI transforma `{petId}` em `{{petId}}`, copia os exemplos de body e aponta `assert.schema` (resposta de sucesso) e `body_schema` (body da requisição) de volta para a spec. Assim cada execução confere o contrato e o Vander deriva sondas negativas dele.
+
+**Fluxos de CRUD.** O `infer_crud_flows` procura `POST /things` junto de `GET|PUT|PATCH|DELETE /things/{{id}}` e propõe `crud_things`: criar, ler, atualizar, ler, apagar e uma última leitura que precisa responder 404 ou 410, de modo que um delete que não apaga faz o fluxo falhar. O id é capturado da resposta do create (`$.id`, a não ser que você já capture). `apply: true` escreve o fluxo e guarda um `.bak` do arquivo.
+
+**Mock server.** `npx conversational-api-test-mcp mock [--port 4010] [--delay 200]` serve as definições para um frontend ou um job de CI rodar sem a API real. Cada endpoint responde, nesta ordem, com o bloco `mock`, o body de um snapshot `values`, uma amostra gerada do `assert.schema` ou `{}`:
+
+```yaml
+- id: get_pet
+  method: GET
+  path: /pets/{{pet_id}}
+  mock: { status: 200, body: { id: "{{pet_id}}", name: Rex } }   # parâmetros do caminho preenchem o body
+```
+
+Caminhos literais ganham dos que têm placeholder (`/pets/mine` antes de `/pets/{{id}}`), preflights de CORS são respondidos e cada requisição aparece no log com o endpoint e a origem da resposta. O mock não guarda estado: um POST não cria nada e um DELETE não remove nada, então o último passo de um fluxo de CRUD falha contra ele, como esperado.
+
+**Exports.** O `export_contract` escreve em `.mcp/contracts/`:
+
+- `openapi`: OpenAPI 3.1 a partir das requisições. Placeholders viram parâmetros de caminho, `assert.schema` e `body_schema` viram `$ref`s e `auth` vira um security scheme.
+- `arazzo`: os fluxos como workflows Arazzo 1.0, ao lado desse OpenAPI. Captures viram outputs dos passos, lidos pelos passos seguintes (`$steps.create_pet.outputs.pet_id`); placeholders que ninguém captura viram inputs do workflow.
+- `pact`: um rascunho Pact v3 com uma interação por endpoint e type matching nos bodies de resposta (vindos do `mock`, de snapshots `values` ou de amostras do schema). Enxugue para o que o consumidor usa antes de publicar num broker.
+
 ## Rodando no CI
 
 O mesmo pacote roda seus fluxos no terminal, então o YAML que o agente usa também barra um pipeline:
@@ -508,6 +603,7 @@ npx conversational-api-test-mcp run --env STAGING --reporter junit --out reports
 - Sem arquivo, lê toda definição em `.mcp/api/` e roda cada um dos seus `flows` (um arquivo sem fluxos é pulado e listado). `--flow smoke` escolhe fluxos, `--request get_user` roda requests avulsos, e `--all-endpoints` roda todos os requests um a um — POST e DELETE inclusive.
 - `--env` funciona como o `set_environment`; os segredos vêm do `.env.mcp.local` ou, no CI, de um passo que o grava a partir do seu cofre de segredos.
 - `--reporter` é `pretty` (padrão), `json` ou `junit` (um testsuite por fluxo, um testcase por passo, lido por GitHub Actions, GitLab, Jenkins e Azure DevOps). `--bail` para no primeiro fluxo que falhar.
+- `--update-snapshots` regrava os snapshots que diferem em vez de falhar. Com `tracing` ligado, um passo que falhou mostra o trace id.
 - Código de saída `0` quando tudo passou, `1` quando um passo falhou, `2` para erro de uso ou nada para rodar.
 
 ```yaml
@@ -550,14 +646,22 @@ Nada aqui foi inventado do zero. Isto é o que o projeto toma emprestado, de que
 | Ideia no projeto | Fonte | O que foi aproveitado e o que mudou |
 |------------------|-------|--------------------------------------|
 | Os eixos do VANDER | Stuart Ashman, [*VADER – a REST API test heuristic*](https://qa-matters.com/2016/07/30/vader-a-rest-api-test-heuristic/) (QA Matters, 2016) | Os cinco eixos originais — Verbs, Authorization, Data, Errors, Responsiveness — são dele. Este projeto acrescenta **N**egative como sexto e transforma parte de cada eixo em verificações executáveis. |
-| O eixo Negative | BINMEN, de Gwen Diagram e Ash Winter (Boundary, Invalid entries, NULL, Method, Empty, Negative), conforme o [*Test Heuristics Cheat Sheet*](https://www.ministryoftesting.com/articles/ab1cd85c) do Ministry of Testing | A ideia de tratar entrada negativa como preocupação própria. Hoje só "campo faltando" é automatizado; o resto vem como ideia manual. |
+| O eixo Negative | BINMEN, de Gwen Diagram e Ash Winter (Boundary, Invalid entries, NULL, Method, Empty, Negative), conforme o [*Test Heuristics Cheat Sheet*](https://www.ministryoftesting.com/articles/ab1cd85c) do Ministry of Testing | A ideia de tratar entrada negativa como preocupação própria. Campo faltando, tipo errado, `null`, vazio e (com `body_schema`) limites, enums e formatos são automatizados. |
 | Separar preocupações de entrada e de saída | POISED, de Amber Race (Parameters, Output, Interop, Security, Errors, Data), mesmo cheat sheet | Orienta as ideias manuais de Data e Negative. |
 | Quais sondas são "destrutivas" | [RFC 9110, HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html) §9.2.1 (métodos seguros) | `GET`, `HEAD` e `OPTIONS` são enviados livremente; qualquer outro método exige `includeDestructive`. |
 | Status esperados | RFC 9110 §15.5.6 (`405`), §15.6.2 (`501`), §15.5.2 (`401`), §15.5.4 (`403`) | Método não declarado deve receber `405` ou `501` (`404` também é aceito); credencial ausente ou inválida deve receber `401` ou `403`. |
-| O que o eixo Authorization procura | [OWASP API Security Top 10 – 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/), API2 Broken Authentication | Automatizado: sem credencial e token inválido. API1 e API5 (autorização em nível de objeto e de função) exigem uma segunda identidade, então ficam manuais. |
+| O que o eixo Authorization procura | [OWASP API Security Top 10 – 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/), API2 Broken Authentication | Automatizado: sem credencial e token inválido. |
 | Allowlist de hosts, limite de tamanho da resposta | OWASP API7 (Server Side Request Forgery) e API4 (Unrestricted Resource Consumption) | Aplicados ao próprio servidor, já que ele faz requests em nome de um agente. |
 | O Vander como prompt MCP | [Especificação MCP, Prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts) | Prompts são "user-controlled": o usuário os escolhe explicitamente, tipicamente como um comando de barra. Por isso a persona é opcional, e não embutida em toda conversa. |
 | Persona para o tom, código para os veredictos | Zheng et al., [*When "A Helpful Assistant" Is Not Really Helpful*](https://arxiv.org/abs/2311.10054) (Findings of EMNLP 2024) | Eles relatam que adicionar uma persona ao system prompt não melhorou a acurácia em relação a não usar persona. Por isso nada do que o Vander afirma depende da persona. |
+| Sondas negativas a partir do schema, fluxos de CRUD inferidos | [Schemathesis](https://github.com/schemathesis/schemathesis) e o artigo do SBFT '26 [*Schemathesis 4: Multi-Phase Property-Based Testing*](https://dl.acm.org/doi/10.1145/3786155.3795697) | Sondas de limite e de tipo derivadas do schema, e vínculos entre operações inferidos em vez de declarados (o artigo achou 73 links OpenAPI explícitos em 4.094 specs). Aqui as sondas são uma lista fixa e explicável por campo, não geração aleatória, e a cadeia inferida é só criar → ler → atualizar → apagar → ler de novo. |
+| Teste de mutação dos asserts | Teste de mutação (PIT, Stryker) e o [*SWE-Mutation*](https://arxiv.org/abs/2605.22175) (2026), que mostrou que suítes escritas por LLM muitas vezes não distinguem uma implementação quebrada de uma correta | O código testado não é mutado; a resposta gravada é. Isso mantém tudo offline e rápido, e combina com uma ferramenta cujos testes são asserts sobre respostas. |
+| Verificações de BOLA com perfis | [OWASP API Security Top 10 – 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/), API1 Broken Object Level Authorization | Automatizado quando a definição declara uma segunda identidade; autorização em nível de função (API5) continua manual. |
+| Snapshots que ignoram dados voláteis | Snapshot / approval testing (snapshots do Jest, "scrubbers" do ApprovalTests) | Modo shape por padrão, para um snapshot de dados reais da API não quebrar todo dia. |
+| Drift de contrato em execução | O [oasdiff](https://github.com/oasdiff/oasdiff) compara duas versões de uma spec; aqui a spec é comparada com a API no ar | Correspondência por método e caminho, validação com o mesmo Ajv do `assert.schema`. |
+| Import de HAR | Ferramentas de record-and-replay como o [Keploy](https://keploy.io) | Só o formato da gravação: sem captura de tráfego, sem replay de mocks, e as credenciais nunca são copiadas. |
+| Exports | [Arazzo 1.0](https://spec.openapis.org/arazzo/latest.html), [especificação Pact v3](https://github.com/pact-foundation/pact-specification/tree/version-3), [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) | O Pact sai como rascunho para revisar, seguindo a recomendação de que contratos de consumidor escritos por agentes precisam de revisão humana antes de barrar qualquer coisa. |
+| Trace id nas requisições | [W3C Trace Context](https://www.w3.org/TR/trace-context/) | Só o header `traceparent`; nenhum span é criado ou exportado. |
 | Saída em TOON | [Especificação TOON](https://github.com/toon-format/spec) | Usada como está nos resultados das tools. Os autores relatam a maior economia em arrays uniformes e pouca ou nenhuma em dados muito aninhados; este projeto não fez benchmark próprio. |
 
 VANDER é o nome que este projeto dá à heurística estendida e não tem afiliação com os autores acima.
