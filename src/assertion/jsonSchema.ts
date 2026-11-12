@@ -181,6 +181,29 @@ function atPointer(doc: unknown, pointer: string): unknown {
   return node;
 }
 
+/** The document a schema lives in (for local `$ref`s) and the schema node itself. */
+export function loadSchemaDocument(
+  schema: string | object,
+  workspaceRoot: string | undefined,
+): { doc: unknown; node: unknown } | undefined {
+  if (typeof schema !== "string") {
+    const doc = normalizeNullable(schema);
+    return { doc, node: doc };
+  }
+  if (!workspaceRoot) {
+    return undefined;
+  }
+  const { file, pointer } = resolveSchemaRef(schema, workspaceRoot);
+  const doc = loadDocument(file);
+  return { doc, node: atPointer(doc, pointer) };
+}
+
+/** Follows a local `$ref` (`#/components/schemas/X`) on `node`, once. */
+export function derefLocal(doc: unknown, node: unknown): unknown {
+  const ref = (node as { $ref?: unknown } | null)?.$ref;
+  return typeof ref === "string" && ref.startsWith("#") ? atPointer(doc, ref.slice(1)) : node;
+}
+
 /**
  * The schema as a plain object, to read its keywords (properties, minLength…) rather than
  * validate with it. A reference loads its file; a local `$ref` on the node or on a property
@@ -190,24 +213,12 @@ export function loadSchemaObject(
   schema: string | object,
   workspaceRoot: string | undefined,
 ): Record<string, unknown> | undefined {
-  let doc: unknown = schema;
-  let node: unknown;
-  if (typeof schema === "string") {
-    if (!workspaceRoot) {
-      return undefined;
-    }
-    const { file, pointer } = resolveSchemaRef(schema, workspaceRoot);
-    doc = loadDocument(file);
-    node = atPointer(doc, pointer);
-  } else {
-    doc = normalizeNullable(schema);
-    node = doc;
+  const loaded = loadSchemaDocument(schema, workspaceRoot);
+  if (!loaded) {
+    return undefined;
   }
-  const deref = (n: unknown): unknown => {
-    const ref = (n as { $ref?: unknown } | null)?.$ref;
-    return typeof ref === "string" && ref.startsWith("#") ? atPointer(doc, ref.slice(1)) : n;
-  };
-  const root = deref(node);
+  const { doc } = loaded;
+  const root = derefLocal(doc, loaded.node);
   if (root === null || typeof root !== "object") {
     return undefined;
   }
@@ -215,7 +226,7 @@ export function loadSchemaObject(
   const props = out.properties;
   if (props && typeof props === "object") {
     out.properties = Object.fromEntries(
-      Object.entries(props as Record<string, unknown>).map(([k, v]) => [k, deref(v)]),
+      Object.entries(props as Record<string, unknown>).map(([k, v]) => [k, derefLocal(doc, v)]),
     );
   }
   return out;
