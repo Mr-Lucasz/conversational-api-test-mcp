@@ -20,7 +20,7 @@ const MAX_MESSAGE_CHARS = 300;
 // Nested shapes are published shallow (a hint instead of the full schema) to keep
 // `tools/list` small; `evalDefinitionSchema` validates them in the handler.
 export const runEvalInputSchema = z.object({
-  workspaceRoot: z.string().optional().describe("Optional when MCP_WORKSPACE_ROOT is set."),
+  workspaceRoot: z.string().optional(),
   definitionRelativePath: z.string(),
   evalName: z
     .string()
