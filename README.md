@@ -291,7 +291,7 @@ Every request in the collection, folders included, is now an endpoint. The `loss
 
 The collection file is only read. Keep it, delete it, or leave it out of git — the YAML is the source of truth from now on.
 
-When you ask the agent to look for something to import without naming a file, `discover_legacy_api_sources` searches the project for `*postman*.json`, `collection*.json`, `openapi*.{yaml,yml,json}`, `swagger*.{yaml,yml}` and `insomnia*.{json,yaml}`. A file with another name is converted when you give its path.
+When you ask the agent to look for something to import without naming a file, `discover_legacy_api_sources` searches the project for `*postman*.json`, `collection*.json`, `openapi*.{yaml,yml,json}`, `swagger*.{yaml,yml}`, `insomnia*.{json,yaml}` and `*.har`. A file with another name is converted when you give its path.
 
 ### A day of work, in prompts
 
@@ -311,7 +311,7 @@ Each line is something you would otherwise do by hand in an API client.
 
 | You say | What happens | In Postman you would |
 |---------|--------------|----------------------|
-| "Here is my Postman collection" + the JSON, or the path to it | Converts a collection, an OpenAPI spec or an Insomnia export to YAML. | Import |
+| "Here is my Postman collection" + the JSON, or the path to it | Converts a collection, an OpenAPI spec, an Insomnia export or a HAR recording to YAML. | Import |
 | "Turn this cURL into a request" + the command | Creates the request in a YAML; any token in it goes to `.env.mcp.local`. | Import → Raw text |
 | "Run `forecast`" | Sends that one request and summarises the response. | Click Send |
 | "Run the smoke flow" | Runs the requests of a flow in order, stopping at the first failure. | Collection Runner |
@@ -327,6 +327,14 @@ Each line is something you would otherwise do by hand in an API client.
 | "Add a request that creates an order with these fields" | Writes a new entry to the YAML, showing a preview first. | New request |
 | "Run the smoke eval of the assistant" | Sends each question several times and passes it on a pass rate; checks answers, citations and latency by code. | — |
 | "Vander, is `forecast` solid?" | Reviews the endpoint on six axes and reports evidence. | — |
+| "Can Bob read Alice's order?" | Calls the endpoint with each other role's token, expecting 401/403/404 (BOLA). | — |
+| "Are the asserts of the smoke flow any good?" | Breaks each real response in small ways and reports which regressions no assert would notice. | — |
+| "Does the API still match `openapi.yaml`?" | Sends the requests and validates status and body against the spec. | — |
+| "Tell me if the response shape changes" | Records a snapshot on the first run and reports drift on later ones. | Compare by eye |
+| "Create the CRUD flows for orders" | Writes create → read → update → delete → read-again flows from the endpoints you have. | — |
+| "Convert `checkout.har`" | Turns a browser recording into requests and a `recorded` flow, without copying its credentials. | Interceptor / Capture |
+| — (terminal) `npx conversational-api-test-mcp mock` | Serves the definitions as a mock API. | Mock server |
+| "Export the flows as Arazzo" · "draft a Pact contract" | Writes OpenAPI 3.1, Arazzo 1.0 or Pact v3 under `.mcp/contracts/`. | Export |
 
 ## Tools
 
@@ -349,8 +357,12 @@ Each line is something you would otherwise do by hand in an API client.
 | `summon_vander` | Hands the agent the Vander persona when you address him by name. |
 | `plan_vander_checks` / `run_vander_checks` | VANDER review of one endpoint: checklist, then automatic execution — one row per check, the id prefix being the axis. |
 | `import_curl` | Turn a pasted `curl` command into a request in a YAML. |
-| `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Import Postman, OpenAPI or Insomnia — from a file or from pasted text. |
+| `discover_legacy_api_sources` / `convert_legacy_to_canonical` | Import Postman, OpenAPI, Insomnia or HAR — from a file or from pasted text. |
 | `import_postman_environment` | Copy a Postman environment export into `.env.mcp.local`, optionally under an environment prefix. |
+| `mutate_assertions` | Mutation testing for asserts: score a flow's asserts and get the ones that are missing. |
+| `check_contract_drift` | Compare real responses with an OpenAPI / Swagger file. |
+| `infer_crud_flows` | Propose (or write) CRUD flows that end by checking the delete really deleted. |
+| `export_contract` | Write a definition as OpenAPI 3.1, Arazzo 1.0 or a Pact v3 draft. |
 
 Every tool publishes MCP annotations: the read-only ones say so (clients can run them without asking), and the ones that send HTTP or replace files are marked as such.
 
@@ -363,13 +375,34 @@ Recommended order: `list_api_definitions` → `summarize_api_definition` → `se
 | Axis | Question | Checked automatically |
 |------|----------|-----------------------|
 | **V**erbs | What does the path do with methods it does not declare? | Undeclared methods are rejected (405/404/501); `OPTIONS` does not error. |
-| **A**uthorization | Who can call it? | No credentials and an invalid token are rejected (401/403). |
-| **N**egative | What happens with bad input? | Each top-level body field removed in turn is rejected (4xx). |
+| **A**uthorization | Who can call it? | No credentials and an invalid token are rejected (401/403). With `roles`, another user asking for this object is refused or gets 404 (BOLA). |
+| **N**egative | What happens with bad input? | Each body field removed, of the wrong type, `null` or empty is rejected (4xx); an unknown extra field causes no 5xx. With `body_schema`, values past `minLength`/`maxLength`/`minimum`/`maximum`, outside the `enum` or in a bad `format` are rejected too. |
 | **D**ata | Does the response say what it should? | Baseline succeeds, `Content-Type` matches the body, captured JSONPaths exist. |
 | **E**rrors | Does it fail well? | Malformed JSON is a client error; no probe causes a 5xx or leaks a stack trace. |
 | **R**esponsiveness | Is it fast enough? | Baseline answers within `maxDurationMs` (default 1000). |
 
-Each axis also carries `manual` ideas (other users' tokens, boundary values, idempotency, rate limiting…) that Vander explores with the regular tools.
+Each axis also carries `manual` ideas (expired tokens, idempotency, rate limiting…) that Vander explores with the regular tools.
+
+Two declarations turn manual ideas into automatic checks:
+
+```yaml
+roles:                       # other identities, as the Authorization each one sends
+  bob: Bearer {{BOB_TOKEN}}
+  support: Bearer {{SUPPORT_TOKEN}}
+endpoints:
+  - id: get_order
+    method: GET
+    path: /orders/{{order_id}}
+    auth: Bearer {{ALICE_TOKEN}}   # the owner
+    allow_roles: [support]          # support may read it: not probed
+  - id: create_user
+    method: POST
+    path: /users
+    body: { name: Ana, age: 30 }
+    body_schema: openapi.yaml#/components/schemas/NewUser   # or inline
+```
+
+`A-role-bob` calls `get_order` with Bob's token and fails if the order comes back: broken object level authorization, first in the OWASP API Security Top 10. Only endpoints that address one object (a `{{placeholder}}` or a numeric id in the path) are probed, since a list is expected to answer every user. `body_schema` feeds the boundary, enum and format probes; an OpenAPI import fills it in for you.
 
 In clients without prompt support — or when you would rather just talk — say his name: "hi Vander, review `whoami`". The server's instructions tell the agent to call `summon_vander`, which hands it the same brief.
 
@@ -402,6 +435,11 @@ VANDER builds on Stuart Ashman's VADER heuristic and adds an explicit Negative a
 - `auth: Bearer {{TOKEN}}` sets the `Authorization` header.
 - `auth_dependency: <endpoint id>` runs that endpoint first when its captured variables are missing, and again after a `401` (disable with `auth_retry_on_401: false`).
 - `digest_auth: { username, password }` performs HTTP Digest.
+- `roles` (at the top of the file) and `allow_roles` (on an endpoint) drive the BOLA checks — see [Vander](#vander).
+
+### Tracing
+
+`tracing: true` at the top of a definition sends a W3C `traceparent` header with every request and reports its `traceId` (on each flow step, and under failures in CI reports), so a failing call can be looked up in New Relic, Datadog, Jaeger or any OpenTelemetry backend. `tracing: { url: "https://your-apm/trace/{traceId}" }` also returns a link. An endpoint that sets its own `traceparent` keeps it.
 
 ### Flows
 
@@ -445,7 +483,17 @@ assert:
   schema: openapi.yaml#/components/schemas/Order   # or an inline { type: object, required: [id] }
 ```
 
-OpenAPI 3.0 and 3.1 both work (`nullable`, internal `$ref`s, `format`s). A failure names the path and the rule, e.g. `schema: /customer must have required property 'name'`. The file is re-read when it changes.
+OpenAPI 3.0 and 3.1 both work (`nullable`, internal `$ref`s, `format`s). A failure names the path and the rule, e.g. `schema: /customer must have required property 'name'`. The file is re-read when it changes. Converting an OpenAPI file (rather than pasting it) writes this `schema` on every endpoint for you.
+
+`snapshot` compares the body with the one recorded the first time it ran, stored in `.mcp/snapshots/<name>.json` (commit it):
+
+```yaml
+assert:
+  snapshot: order                      # shape: keys and value types
+  # snapshot: { name: order, mode: values, ignore: [$.requestId] }
+```
+
+`shape` (the default) catches contract drift (a field that disappeared, changed type or appeared) without breaking on data that changes every day. `values` compares the values too, with UUIDs, dates, JWTs and long hex ids masked; `ignore` drops JSONPaths. A failure reads `snapshot order: $.total: "<number>" → "<string>"`. To accept a change on purpose, run with `--update-snapshots` (or `MCP_UPDATE_SNAPSHOTS=1`).
 
 ### Evals: endpoints whose answer varies
 
@@ -497,6 +545,53 @@ Things to know:
 - A streamed answer (`text/event-stream`) is folded into `{ text, eventCount, events }`, so `$.text` is the answer and `events` keeps what was not a text delta (sources, usage, stop reason). Set `sse.textPath` on the request when the delta sits somewhere unusual.
 - [`examples/rag.example.yaml`](examples/rag.example.yaml) is a complete starting point.
 
+## Testing the tests
+
+A green suite says the asserts passed, not that they would catch anything. `mutate_assertions` runs a flow (or one request) once, then breaks each real response in realistic ways and runs the asserts again on every copy: a field disappears, changes type or turns `null`, a list comes back empty, a value changes, the status becomes 500 or 404, the answer is ten times slower. Nothing extra is sent to the API.
+
+For a request whose only assert is `{ status: 200, jsonPathExists: $.id }`, against a mocked order (excerpt of the real output):
+
+```text
+score: 0.17
+killed: 5
+total: 30
+steps[1]{requestId,score,killed,total,note}:
+  get_order,0.17,5,30,""
+survivors[10]{step,change,addToAssert}:
+  get_order,took 1200ms instead of 20ms,"{\"maxDurationMs\":200}"
+  get_order,$.status disappeared,"{\"jsonPathExists\":\"$.status\"}"
+  get_order,$.items changed type (array → object),"{\"schema\":{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"items\":{\"type\":\"array\"}}}}"
+  …
+moreSurvivors: 15
+```
+
+Each surviving mutation is a regression the suite would let through, with an assert that would catch it. Keep the ones on stable fields; ids and timestamps change between runs. `useLastResponse: true` scores the last response of the session without sending anything. Snapshots are read, never rewritten, while mutants run.
+
+## Contracts: drift, mocks and exports
+
+**Drift.** `check_contract_drift` sends the requests of a definition (read-only ones unless `includeDestructive`) and checks each answer against the operation the OpenAPI / Swagger file documents for it: an undocumented status, or a body that breaks the response schema, is drift. It also lists the operations of the spec that no request covers. Requests are matched by method and path, whether the path holds `{{placeholders}}` or real ids, with or without the server's base path.
+
+**Imports that keep the link.** Converting an OpenAPI file turns `{petId}` into `{{petId}}`, copies request body examples, and points `assert.schema` (success response) and `body_schema` (request body) back into the spec, so every run checks the contract and Vander derives negative probes from it.
+
+**CRUD flows.** `infer_crud_flows` looks for `POST /things` next to `GET|PUT|PATCH|DELETE /things/{{id}}` and proposes `crud_things`: create, read, update, read, delete, and a last read that must answer 404 or 410, so a delete that does not delete fails it. It captures the id from the create response (`$.id` unless you already capture it). `apply: true` writes the flow, keeping a `.bak` of the file.
+
+**Mock server.** `npx conversational-api-test-mcp mock [--port 4010] [--delay 200]` serves the definitions so a frontend or a CI job can run without the real API. Each endpoint answers with its `mock` block, the body of a `values` snapshot, a sample built from its `assert.schema`, or `{}`, in that order:
+
+```yaml
+- id: get_pet
+  method: GET
+  path: /pets/{{pet_id}}
+  mock: { status: 200, body: { id: "{{pet_id}}", name: Rex } }   # path params fill the body
+```
+
+Literal paths win over templated ones (`/pets/mine` before `/pets/{{id}}`), CORS preflights are answered, and every request is logged with the endpoint and the source of the answer. The mock keeps no state: a POST does not create anything and a DELETE does not remove it, so the last step of a CRUD flow fails against it by design.
+
+**Exports.** `export_contract` writes under `.mcp/contracts/`:
+
+- `openapi`: OpenAPI 3.1 from the requests. Placeholders become path parameters, `assert.schema` and `body_schema` become `$ref`s, `auth` becomes a security scheme.
+- `arazzo`: the flows as Arazzo 1.0 workflows next to that OpenAPI. Captures become step outputs that later steps read (`$steps.create_pet.outputs.pet_id`); placeholders nobody captured become workflow inputs.
+- `pact`: a Pact v3 draft with one interaction per endpoint and type matching on response bodies (taken from `mock`, value snapshots or schema samples). Trim it to what the consumer uses before publishing it to a broker.
+
 ## Running in CI
 
 The same package runs your flows from a terminal, so the YAML that the agent uses also gates a pipeline:
@@ -508,6 +603,7 @@ npx conversational-api-test-mcp run --env STAGING --reporter junit --out reports
 - With no file, every definition under `.mcp/api/` is read and each of its `flows` runs (a file with no flows is skipped and listed). `--flow smoke` picks flows, `--request get_user` runs single requests, and `--all-endpoints` runs every request one by one — POST and DELETE included.
 - `--env` works as `set_environment`; secrets come from `.env.mcp.local` or, in CI, from a step that writes it from your secret store.
 - `--reporter` is `pretty` (default), `json` or `junit` (one testsuite per flow, one testcase per step, read by GitHub Actions, GitLab, Jenkins and Azure DevOps). `--bail` stops at the first failing flow.
+- `--update-snapshots` rewrites the snapshots that differ instead of failing. With `tracing` on, a failing step shows its trace id.
 - Exit code `0` when everything passed, `1` when a step failed, `2` for a usage error or nothing to run.
 
 ```yaml
@@ -550,14 +646,22 @@ Nothing here was invented from scratch. This is what the project borrows, from w
 | Idea in this project | Source | What was taken, and what was changed |
 |----------------------|--------|--------------------------------------|
 | The VANDER axes | Stuart Ashman, [*VADER – a REST API test heuristic*](https://qa-matters.com/2016/07/30/vader-a-rest-api-test-heuristic/) (QA Matters, 2016) | The five original axes — Verbs, Authorization, Data, Errors, Responsiveness — are his. This project adds **N**egative as a sixth and turns part of each axis into executable checks. |
-| The Negative axis | Gwen Diagram & Ash Winter's BINMEN (Boundary, Invalid entries, NULL, Method, Empty, Negative), as listed in the Ministry of Testing [*Test Heuristics Cheat Sheet*](https://www.ministryoftesting.com/articles/ab1cd85c) | The framing of negative input as its own concern. Only "missing field" is automated today; the rest are offered as manual ideas. |
+| The Negative axis | Gwen Diagram & Ash Winter's BINMEN (Boundary, Invalid entries, NULL, Method, Empty, Negative), as listed in the Ministry of Testing [*Test Heuristics Cheat Sheet*](https://www.ministryoftesting.com/articles/ab1cd85c) | The framing of negative input as its own concern. Missing field, wrong type, `null`, empty and (with `body_schema`) boundaries, enums and formats are automated. |
 | Splitting input from output concerns | Amber Race's POISED (Parameters, Output, Interop, Security, Errors, Data), same cheat sheet | Informs the manual ideas under Data and Negative. |
 | Which probes are "destructive" | [RFC 9110, HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html) §9.2.1 (safe methods) | `GET`, `HEAD` and `OPTIONS` are sent freely; every other method needs `includeDestructive`. |
 | Expected statuses | RFC 9110 §15.5.6 (`405`), §15.6.2 (`501`), §15.5.2 (`401`), §15.5.4 (`403`) | An undeclared method should get `405` or `501` (`404` is also accepted); missing or bad credentials should get `401` or `403`. |
-| What the Authorization axis looks for | [OWASP API Security Top 10 – 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/), API2 Broken Authentication | Automated: no credentials, invalid token. API1 and API5 (object- and function-level authorization) need a second identity, so they stay manual. |
+| What the Authorization axis looks for | [OWASP API Security Top 10 – 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/), API2 Broken Authentication | Automated: no credentials, invalid token. |
 | Host allowlist, response size cap | OWASP API7 (Server Side Request Forgery) and API4 (Unrestricted Resource Consumption) | Applied to this server itself, since it makes requests on an agent's behalf. |
 | Vander as an MCP prompt | [MCP specification, Prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts) | Prompts are "user-controlled": the user picks them explicitly, typically as a slash command. That is why the persona is opt-in rather than baked into every conversation. |
 | Persona for tone, code for verdicts | Zheng et al., [*When "A Helpful Assistant" Is Not Really Helpful*](https://arxiv.org/abs/2311.10054) (Findings of EMNLP 2024) | They report that adding a persona to the system prompt did not improve accuracy over no persona. So nothing Vander asserts depends on the persona. |
+| Schema-driven negative probes, inferred CRUD flows | [Schemathesis](https://github.com/schemathesis/schemathesis) and its SBFT '26 paper [*Schemathesis 4: Multi-Phase Property-Based Testing*](https://dl.acm.org/doi/10.1145/3786155.3795697) | Boundary and type probes derived from the schema, and links between operations inferred instead of declared (the paper found 73 explicit OpenAPI links across 4,094 specs). Here the probes are a fixed, explainable list per field, not random generation, and the inferred chain is only create → read → update → delete → read again. |
+| Mutation testing of asserts | Mutation testing (PIT, Stryker) and [*SWE-Mutation*](https://arxiv.org/abs/2605.22175) (2026), which found LLM-written test suites often lack the power to tell a broken implementation from a correct one | The code under test is not mutated; the recorded response is. That keeps it offline and fast, and fits a tool whose tests are asserts on responses. |
+| BOLA checks with roles | [OWASP API Security Top 10 – 2023](https://owasp.org/API-Security/editions/2023/en/0x11-t10/), API1 Broken Object Level Authorization | Automated once the definition declares a second identity; still manual for function-level authorization (API5). |
+| Snapshots that ignore volatile data | Snapshot / approval testing (Jest snapshots, ApprovalTests "scrubbers") | Shape mode by default, so a snapshot of live API data does not break every day. |
+| Runtime contract drift | [oasdiff](https://github.com/oasdiff/oasdiff) compares two versions of a spec; this compares the spec with the live API | Matching by method and path, validation with the same Ajv engine as `assert.schema`. |
+| HAR import | Record-and-replay tools such as [Keploy](https://keploy.io) | Only the recording format is taken: no traffic capture, no replay of mocks, and credentials are never copied. |
+| Exports | [Arazzo 1.0](https://spec.openapis.org/arazzo/latest.html), [Pact specification v3](https://github.com/pact-foundation/pact-specification/tree/version-3), [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) | Pact output is a draft to review, following the advice that agent-written consumer contracts need human review before they gate anything. |
+| Trace ids on requests | [W3C Trace Context](https://www.w3.org/TR/trace-context/) | Only the `traceparent` header; no spans are created or exported. |
 | TOON output | [TOON specification](https://github.com/toon-format/spec) | Used as-is for tool results. Its authors report the largest savings on uniform arrays and little or none on deeply nested data; this project has not benchmarked it independently. |
 
 VANDER is this project's name for the extended heuristic and has no affiliation with the authors above.
